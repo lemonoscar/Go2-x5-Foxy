@@ -115,8 +115,34 @@ run_mujoco_build() {
 run_ros_build() {
     local packages=("$@")
     local package_list=$(IFS=' '; echo "${packages[*]}")
+    local cmake_args=()
+    local colcon_cmd=(colcon build --merge-install --symlink-install)
 
     print_header "[Running ROS Build]"
+
+    # Foxy on Ubuntu 20.04 expects system Python 3.8 development files.
+    # Force CMake to use /usr/bin/python3 to avoid picking /usr/local Python (e.g. 3.9/3.10 without dev headers).
+    if [[ "$ROS_DISTRO" == "foxy" ]] && [ -x /usr/bin/python3 ]; then
+        local py_exec="/usr/bin/python3"
+        local py_ver=""
+        py_ver=$($py_exec -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || true)
+        local py_major_minor=""
+        py_major_minor=$($py_exec -c "import sys; print(f'{sys.version_info.major}{sys.version_info.minor}')" 2>/dev/null || true)
+        if [ -n "$py_ver" ] && [ -n "$py_major_minor" ]; then
+            local py_include="/usr/include/python${py_ver}"
+            local py_lib="/usr/lib/aarch64-linux-gnu/libpython${py_ver}.so"
+            cmake_args+=("-DPython3_EXECUTABLE=${py_exec}")
+            cmake_args+=("-DPython3_ROOT_DIR=/usr")
+            cmake_args+=("-DPython3_FIND_STRATEGY=LOCATION")
+            if [ -f "$py_include/Python.h" ]; then
+                cmake_args+=("-DPython3_INCLUDE_DIR=${py_include}")
+            fi
+            if [ -f "$py_lib" ]; then
+                cmake_args+=("-DPython3_LIBRARY=${py_lib}")
+            fi
+            print_info "Forcing CMake Python3 to: ${py_exec} (version ${py_ver})"
+        fi
+    fi
 
     # Clean existing symlinks
     clean_existing_symlinks "${packages[@]}"
@@ -135,11 +161,18 @@ run_ros_build() {
     if [ ${#packages[@]} -eq 0 ]; then
         print_header "[Using colcon build (ROS2 Foxy)]"
         print_info "Building all packages..."
-        colcon build --merge-install --symlink-install
+        if [ ${#cmake_args[@]} -gt 0 ]; then
+            colcon_cmd+=(--cmake-args "${cmake_args[@]}")
+        fi
+        "${colcon_cmd[@]}"
     else
         print_header "[Using colcon build (ROS2 Foxy)]"
         print_info "Building specific packages: $package_list"
-        colcon build --merge-install --symlink-install --packages-select $package_list
+        colcon_cmd+=(--packages-select "${packages[@]}")
+        if [ ${#cmake_args[@]} -gt 0 ]; then
+            colcon_cmd+=(--cmake-args "${cmake_args[@]}")
+        fi
+        "${colcon_cmd[@]}"
     fi
 
     print_success "ROS build completed!"
