@@ -1,0 +1,118 @@
+# Copyright (c) 2024-2025 Ziqi Fan
+# SPDX-License-Identifier: Apache-2.0
+
+go2_x5/robot_lab:
+  model_name: "policy.pt"
+  # Flat policy obs: 69 (no height_scan, no history)
+  num_observations: 69
+  observations: ["ang_vel", "gravity_vec", "commands", "dof_pos", "dof_vel", "actions", "arm_joint_command"]
+  observations_history: []
+  observations_history_priority: "time"
+  clip_obs: 100.0
+  clip_actions_lower: [-10.0, -10.0, -10.0,
+                       -10.0, -10.0, -10.0,
+                       -10.0, -10.0, -10.0,
+                       -10.0, -10.0, -10.0,
+                       -10.0, -10.0, -10.0,
+                       -10.0, -10.0, -10.0]
+  clip_actions_upper: [10.0, 10.0, 10.0,
+                       10.0, 10.0, 10.0,
+                       10.0, 10.0, 10.0,
+                       10.0, 10.0, 10.0,
+                       10.0, 10.0, 10.0,
+                       10.0, 10.0, 10.0]
+  # Restore leg authority for walking; keep arm conservative
+  rl_kp: [25.0, 25.0, 25.0,
+          25.0, 25.0, 25.0,
+          25.0, 25.0, 25.0,
+          25.0, 25.0, 25.0,
+          40.0, 40.0, 40.0,
+          40.0, 40.0, 40.0]
+  rl_kd: [0.5, 0.5, 0.5,
+          0.5, 0.5, 0.5,
+          0.5, 0.5, 0.5,
+          0.5, 0.5, 0.5,
+          2.5, 2.5, 2.5,
+          2.5, 2.5, 2.5]
+  fixed_kp: [80.0, 80.0, 80.0,
+             80.0, 80.0, 80.0,
+             80.0, 80.0, 80.0,
+             80.0, 80.0, 80.0,
+             30.0, 30.0, 30.0,
+             30.0, 30.0, 30.0]
+  fixed_kd: [3.0, 3.0, 3.0,
+             3.0, 3.0, 3.0,
+             3.0, 3.0, 3.0,
+             3.0, 3.0, 3.0,
+             3.0, 3.0, 3.0,
+             3.0, 3.0, 3.0]
+  num_of_dofs: 18
+  # Match training (env.yaml): arm_joint.* scale=0.1
+  action_scale: [0.125, 0.25, 0.08,
+                 0.125, 0.25, 0.08,
+                 0.125, 0.25, 0.08,
+                 0.125, 0.25, 0.08,
+                 0.1, 0.1, 0.1,
+                 0.1, 0.1, 0.1]
+  wheel_indices: []
+  lin_vel_scale: 1.0
+  # Match training (env.yaml): base_ang_vel scale=0.25, velocity_commands scale=1.0
+  ang_vel_scale: 0.25
+  dof_pos_scale: 1.0
+  dof_vel_scale: 0.05
+  commands_scale: [1.0, 1.0, 1.0]
+  cmd_vel_alpha: 0.2
+  # Key[1] fixed command (x forward, y lateral, yaw)
+  fixed_cmd_x: 0.2
+  fixed_cmd_y: 0.0
+  fixed_cmd_yaw: 0.0
+  torque_limits: [23.5, 23.5, 23.5,
+                  23.5, 23.5, 23.5,
+                  23.5, 23.5, 23.5,
+                  23.5, 23.5, 23.5,
+                  3.0, 3.0, 3.0,
+                  3.0, 3.0, 3.0]
+  default_dof_pos: [ 0.00, 0.80, -1.50,
+                     0.00, 0.80, -1.50,
+                     0.00, 0.80, -1.50,
+                     0.00, 0.80, -1.50,
+                     0.00, 1.57, 1.57,
+                     0.00, 0.00, 0.00]
+  joint_mapping: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+  # Match training init height
+  init_base_height: 0.45
+
+  # Arm command settings
+  arm_command_size: 6
+  arm_joint_command_topic: "/arm_joint_pos_cmd"
+  # arm_control_mode:
+  #   unitree -> single channel
+  #   split/arx_x5/bridge -> dual channel (leg via unitree, arm via bridge topics)
+  arm_control_mode: "split"
+  arm_joint_start_index: 12
+  arm_joint_count: 6
+  arm_bridge_cmd_topic: "/arx_x5/joint_cmd"
+  arm_bridge_state_topic: "/arx_x5/joint_state"
+  # True: split mode requires fresh /arx_x5/joint_state, else arm command is clamped to hold pose.
+  arm_bridge_require_state: true
+  arm_bridge_state_timeout_sec: 0.25
+  arm_hold_enabled: true
+  # Real deployment default: lock arm for stable first rollout.
+  arm_lock: true
+  arm_lock_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]
+  # When arm pose command is active (Key[2]), lock base pose to avoid spinning
+  arm_lock_base_on_pose: false
+  # Fixed arm hold pose (used as RL command + joint hold)
+  arm_hold_pose: [0, 1, 1, 0.0, 0.0, 0.0]
+  arm_command_smoothing_time: 15.0
+  # MuJoCo arm output filter (EMA). Smaller = smoother.
+  arm_output_filter_alpha: 0.02
+  # Key[2] single arm pose (hold)
+  arm_key_pose: [1, 2.7, 1.7, 0.0, 0.43, 0.43]  # Arm command sequence (keyboard trigger)  # Num2: play once, Num3: stop
+  # Each pose has 6 values (arm_joint1..6), total length = arm_sequence_steps * 6
+  arm_sequence_interval: 2.0
+  arm_sequence_steps: 3
+  arm_sequence: [0.00, 1.57, 1.57, 0.00, 0.00, 0.00, #默认
+                 0.60, 3.00, 1.00, 0.20, 0.00, 0.00, #侧前夹
+                 0.20, 1.00, 1.40, -0.20, 0.00, 0.00, #上抬
+                 -1.7, 1.4, 2.3, 0.0, 0.43, 0.43]
