@@ -278,9 +278,15 @@ endif()
 
 # unitree_sdk2
 set(UNITREE_SDK2_AVAILABLE OFF)
+set(UNITREE_SDK2_THIRDPARTY_INCLUDE "")
+set(UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE "")
 if(SYSTEM_TYPE STREQUAL "Linux")
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_sdk2/CMakeLists.txt")
         set(UNITREE_SDK2_AVAILABLE ON)
+        set(UNITREE_SDK2_THIRDPARTY_INCLUDE
+            "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_sdk2/thirdparty/include")
+        set(UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE
+            "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_sdk2/thirdparty/include/ddscxx")
         set(BUILD_EXAMPLES OFF CACHE BOOL "Disable examples build for unitree_sdk2" FORCE)
         add_subdirectory(library/thirdparty/robot_sdk/unitree/unitree_sdk2)
     else()
@@ -501,6 +507,12 @@ endif()
 # executable for rl real go2
 if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
     add_executable(rl_real_go2 src/rl_real_go2.cpp)
+    # Force Unitree SDK2 bundled DDS headers to be searched before ROS/system DDS headers.
+    # This avoids ABI/API mismatch in TopicTraits/ddscxx between different CycloneDDS versions.
+    target_include_directories(rl_real_go2 BEFORE PRIVATE
+        ${UNITREE_SDK2_THIRDPARTY_INCLUDE}
+        ${UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE}
+    )
     target_link_libraries(rl_real_go2
         unitree_sdk2
         rl_sdk
@@ -527,6 +539,10 @@ endif()
 # executable for rl real go2_x5
 if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
     add_executable(rl_real_go2_x5 src/rl_real_go2_x5.cpp)
+    target_include_directories(rl_real_go2_x5 BEFORE PRIVATE
+        ${UNITREE_SDK2_THIRDPARTY_INCLUDE}
+        ${UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE}
+    )
     target_link_libraries(rl_real_go2_x5
         unitree_sdk2
         rl_sdk
@@ -558,6 +574,10 @@ endif()
 # executable for rl real g1
 if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
     add_executable(rl_real_g1 src/rl_real_g1.cpp)
+    target_include_directories(rl_real_g1 BEFORE PRIVATE
+        ${UNITREE_SDK2_THIRDPARTY_INCLUDE}
+        ${UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE}
+    )
     target_link_libraries(rl_real_g1
         unitree_sdk2
         rl_sdk
