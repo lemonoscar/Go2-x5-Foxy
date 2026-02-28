@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
 from launch.conditions import IfCondition
 from launch.substitutions import EnvironmentVariable, LaunchConfiguration
 from launch_ros.actions import Node
@@ -29,6 +29,7 @@ def generate_launch_description():
     arm_enable_background_send_recv = LaunchConfiguration("arm_enable_background_send_recv")
     arm_controller_dt = LaunchConfiguration("arm_controller_dt")
     arm_init_to_home = LaunchConfiguration("arm_init_to_home")
+    rmw_implementation = LaunchConfiguration("rmw_implementation")
 
     arm_bridge_node = Node(
         package="rl_sar",
@@ -90,6 +91,11 @@ def generate_launch_description():
             DeclareLaunchArgument("arm_enable_background_send_recv", default_value="false"),
             DeclareLaunchArgument("arm_controller_dt", default_value="0.002"),
             DeclareLaunchArgument("arm_init_to_home", default_value="false"),
+            DeclareLaunchArgument(
+                "rmw_implementation",
+                default_value=EnvironmentVariable("RMW_IMPLEMENTATION", default_value="rmw_cyclonedds_cpp"),
+            ),
+            SetEnvironmentVariable("RMW_IMPLEMENTATION", rmw_implementation),
             arm_bridge_node,
             go2_x5_node,
         ]

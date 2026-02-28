@@ -119,6 +119,7 @@ arm_bridge_state_topic: "/arx_x5/joint_state"
 source /opt/ros/foxy/setup.bash
 source /home/lemon/Issac/rl_ras_n/install/setup.bash
 export ARX5_SDK_ROOT=/home/unitree/arx5-sdk
+# 默认已在 launch 内使用 rmw_cyclonedds_cpp；如需覆盖可传参 rmw_implementation:=...
 
 ros2 launch rl_sar go2_x5_real_dual.launch.py \
   network_interface:=<YOUR_NETWORK_INTERFACE> \
