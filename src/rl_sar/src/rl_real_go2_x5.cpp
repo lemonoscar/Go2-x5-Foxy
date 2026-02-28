@@ -139,6 +139,7 @@ RL_Real_Go2X5::~RL_Real_Go2X5()
 void RL_Real_Go2X5::InitializeArmCommandState()
 {
     this->cmd_vel_alpha = this->params.Get<float>("cmd_vel_alpha", this->cmd_vel_alpha);
+    this->joystick_deadband = std::max(0.0f, this->params.Get<float>("joystick_deadband", this->joystick_deadband));
     this->arm_command_size = this->params.Get<int>("arm_command_size", 0);
     this->arm_joint_command_topic = this->params.Get<std::string>("arm_joint_command_topic", "/arm_joint_pos_cmd");
     this->arm_hold_enabled = this->params.Get<bool>("arm_hold_enabled", true);
@@ -644,9 +645,19 @@ void RL_Real_Go2X5::GetState(RobotState<float> *state)
     if (joy_bits.components.R1 && joy_bits.components.right) this->control.SetGamepad(Input::Gamepad::RB_DPadRight);
     if (joy_bits.components.L1 && joy_bits.components.R1) this->control.SetGamepad(Input::Gamepad::LB_RB);
 
-    this->control.x = joy_ly;
-    this->control.y = -joy_lx;
-    this->control.yaw = -joy_rx;
+    const bool fixed_cmd_latched =
+        (this->control.current_keyboard == Input::Keyboard::Num1 &&
+         this->control.last_keyboard == Input::Keyboard::Num1);
+    const bool joystick_active =
+        (std::fabs(joy_ly) > this->joystick_deadband) ||
+        (std::fabs(joy_lx) > this->joystick_deadband) ||
+        (std::fabs(joy_rx) > this->joystick_deadband);
+    if (!fixed_cmd_latched || joystick_active)
+    {
+        this->control.x = joy_ly;
+        this->control.y = -joy_lx;
+        this->control.yaw = -joy_rx;
+    }
 
     state->imu.quaternion[0] = imu_quat[0]; // w
     state->imu.quaternion[1] = imu_quat[1]; // x
@@ -1222,6 +1233,13 @@ void RL_Real_Go2X5::ArmBridgeStateCallback(
     this->arm_bridge_state_valid = true;
     this->arm_bridge_state_stamp = std::chrono::steady_clock::now();
     this->arm_bridge_state_timeout_warned = false;
+    if (!this->arm_bridge_state_stream_logged)
+    {
+        this->arm_bridge_state_stream_logged = true;
+        std::cout << LOGGER::INFO << "Arm bridge state stream detected: topic="
+                  << this->arm_bridge_state_topic << ", dof=" << this->arm_joint_count
+                  << std::endl;
+    }
 }
 #endif
 

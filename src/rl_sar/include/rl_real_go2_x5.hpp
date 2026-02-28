@@ -177,6 +177,8 @@ private:
     std::vector<float> arm_external_shadow_q;
     std::vector<float> arm_external_shadow_dq;
     std::chrono::steady_clock::time_point arm_bridge_state_stamp;
+    bool arm_bridge_state_stream_logged = false;
+    float joystick_deadband = 0.05f;
 
     std::mutex cmd_vel_mutex;
     std::mutex arm_command_mutex;
