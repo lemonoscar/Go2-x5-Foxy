@@ -972,11 +972,20 @@ void RL_Real_Go2X5::Plot()
     this->plot_t.push_back(this->motiontime);
     plt::cla();
     plt::clf();
+    std::array<float, 20> motor_q_snapshot{};
+    {
+        std::lock_guard<std::mutex> lock(this->unitree_state_mutex);
+        motor_q_snapshot = this->unitree_motor_q;
+    }
     for (int i = 0; i < this->params.Get<int>("num_of_dofs"); ++i)
     {
         this->plot_real_joint_pos[i].erase(this->plot_real_joint_pos[i].begin());
         this->plot_target_joint_pos[i].erase(this->plot_target_joint_pos[i].begin());
-        this->plot_real_joint_pos[i].push_back(this->unitree_low_state.motor_state()[i].q());
+        const int mapped = this->params.Get<std::vector<int>>("joint_mapping")[i];
+        const float real_q = (mapped >= 0 && mapped < static_cast<int>(motor_q_snapshot.size()))
+            ? motor_q_snapshot[static_cast<size_t>(mapped)]
+            : 0.0f;
+        this->plot_real_joint_pos[i].push_back(real_q);
         this->plot_target_joint_pos[i].push_back(this->unitree_low_command.motor_cmd()[i].q());
         plt::subplot(this->params.Get<int>("num_of_dofs"), 1, i + 1);
         plt::named_plot("_real_joint_pos", this->plot_t, this->plot_real_joint_pos[i], "r");
