@@ -100,6 +100,7 @@ class ArxBackend:
         require_initial_state: bool,
     ) -> None:
         # Preferred backend: real-stanford/arx5-sdk python bindings.
+        fatal_sdk_error = None
         try:
             import arx5_interface as arx5  # type: ignore
 
@@ -115,13 +116,28 @@ class ArxBackend:
                 if self._controller_dt > 0.0:
                     controller_config.controller_dt = float(self._controller_dt)
                 self.arm = arx5.Arx5JointController(robot_config, controller_config, interface_name)
-            except Exception:
-                self.arm = arx5.Arx5JointController(model, interface_name)
-                self._force_send_recv_once = True
+            except Exception as ex_config:
+                ex_msg = str(ex_config)
+                # Avoid second constructor retry for known transport-level failures.
+                if (
+                    "None of the motors are initialized" in ex_msg
+                    or "connection or power of the arm" in ex_msg
+                    or "Failed to open USB-CAN adapter" in ex_msg
+                ):
+                    raise RuntimeError(
+                        f"ARX transport init failed on interface '{interface_name}': {ex_msg}"
+                    ) from ex_config
                 try:
-                    dof = int(self.arm.get_robot_config().joint_dof)
-                except Exception:
-                    dof = 6
+                    self.arm = arx5.Arx5JointController(model, interface_name)
+                    self._force_send_recv_once = True
+                    try:
+                        dof = int(self.arm.get_robot_config().joint_dof)
+                    except Exception:
+                        dof = 6
+                except Exception as ex_simple:
+                    raise RuntimeError(
+                        f"ARX controller init failed (config ctor: {ex_config}; simple ctor: {ex_simple})"
+                    ) from ex_simple
 
             self.joint_count = dof
             self._joint_cmd = arx5.JointState(self.joint_count)
@@ -137,7 +153,19 @@ class ArxBackend:
                 raise RuntimeError("ARX initial state invalid (all-zero state), check CAN wiring/interface.")
             return
         except Exception as ex:  # pylint: disable=broad-except
+            fatal_sdk_error = ex
             self.logger.warning(f"Load arx5_interface (Arx5JointController) failed: {ex}")
+
+        # If arx5_interface is present but failed at transport layer, stop fallback probing.
+        # Some SDK builds are not retry-safe and may crash in native teardown after repeated ctor attempts.
+        if fatal_sdk_error is not None and (
+            "ARX transport init failed" in str(fatal_sdk_error)
+            or "logger with name" in str(fatal_sdk_error)
+        ):
+            self.backend_name = "none"
+            self.arm = None
+            self.logger.error(str(fatal_sdk_error))
+            return
 
         # Compatibility backend: legacy Arm wrapper (if provided by custom package).
         try:
