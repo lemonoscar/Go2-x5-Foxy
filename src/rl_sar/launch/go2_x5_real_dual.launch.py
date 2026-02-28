@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
+from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import EnvironmentVariable, LaunchConfiguration
 from launch_ros.actions import Node
@@ -29,7 +29,8 @@ def generate_launch_description():
     arm_enable_background_send_recv = LaunchConfiguration("arm_enable_background_send_recv")
     arm_controller_dt = LaunchConfiguration("arm_controller_dt")
     arm_init_to_home = LaunchConfiguration("arm_init_to_home")
-    rmw_implementation = LaunchConfiguration("rmw_implementation")
+    bridge_rmw_implementation = LaunchConfiguration("bridge_rmw_implementation")
+    go2_rmw_implementation = LaunchConfiguration("go2_rmw_implementation")
 
     arm_bridge_node = Node(
         package="rl_sar",
@@ -37,6 +38,7 @@ def generate_launch_description():
         name="arx_x5_bridge",
         output="screen",
         condition=IfCondition(start_arm_bridge),
+        additional_env={"RMW_IMPLEMENTATION": bridge_rmw_implementation},
         parameters=[
             {
                 "model": arm_model,
@@ -66,6 +68,7 @@ def generate_launch_description():
         executable="rl_real_go2_x5",
         name="rl_real_go2_x5",
         output="screen",
+        additional_env={"RMW_IMPLEMENTATION": go2_rmw_implementation},
         arguments=[network_interface],
     )
 
@@ -92,10 +95,13 @@ def generate_launch_description():
             DeclareLaunchArgument("arm_controller_dt", default_value="0.002"),
             DeclareLaunchArgument("arm_init_to_home", default_value="false"),
             DeclareLaunchArgument(
-                "rmw_implementation",
-                default_value=EnvironmentVariable("RMW_IMPLEMENTATION", default_value="rmw_cyclonedds_cpp"),
+                "bridge_rmw_implementation",
+                default_value="rmw_cyclonedds_cpp",
             ),
-            SetEnvironmentVariable("RMW_IMPLEMENTATION", rmw_implementation),
+            DeclareLaunchArgument(
+                "go2_rmw_implementation",
+                default_value="rmw_fastrtps_cpp",
+            ),
             arm_bridge_node,
             go2_x5_node,
         ]
