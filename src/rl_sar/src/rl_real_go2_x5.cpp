@@ -14,6 +14,8 @@
 
 RL_Real_Go2X5::RL_Real_Go2X5(int argc, char **argv)
 {
+    std::cout << LOGGER::INFO << "[Boot] go2_x5 constructor begin" << std::endl;
+
     // read params from yaml
     this->ang_vel_axis = "body";
     this->robot_name = "go2_x5";
@@ -21,6 +23,7 @@ RL_Real_Go2X5::RL_Real_Go2X5(int argc, char **argv)
     this->InitializeArmCommandState();
     this->InitializeArmChannelConfig();
     this->ValidateJointMappingOrThrow("base.yaml");
+    std::cout << LOGGER::INFO << "[Boot] base.yaml loaded and arm config validated" << std::endl;
 
     // auto load FSM by robot_name
     if (FSMManager::GetInstance().IsTypeSupported(this->robot_name))
@@ -35,38 +38,55 @@ RL_Real_Go2X5::RL_Real_Go2X5(int argc, char **argv)
     {
         std::cout << LOGGER::ERROR << "[FSM] No FSM registered for robot: " << this->robot_name << std::endl;
     }
+    std::cout << LOGGER::INFO << "[Boot] FSM initialization complete" << std::endl;
 
 #if defined(USE_ROS1) && defined(USE_ROS)
+    std::cout << LOGGER::INFO << "[Boot] Creating ROS1 node handle" << std::endl;
     this->ros1_nh = std::make_shared<ros::NodeHandle>();
     this->cmd_vel_subscriber = this->ros1_nh->subscribe<geometry_msgs::Twist>("/cmd_vel", 10, &RL_Real_Go2X5::CmdvelCallback, this);
 #elif defined(USE_ROS2) && defined(USE_ROS)
+    std::cout << LOGGER::INFO << "[Boot] Creating ROS2 node" << std::endl;
     ros2_node = std::make_shared<rclcpp::Node>("rl_real_go2_x5_node");
+    std::cout << LOGGER::INFO << "[Boot] Creating /cmd_vel subscription" << std::endl;
     this->cmd_vel_subscriber = ros2_node->create_subscription<geometry_msgs::msg::Twist>(
         "/cmd_vel", rclcpp::SystemDefaultsQoS(),
         [this] (const geometry_msgs::msg::Twist::SharedPtr msg) { this->CmdvelCallback(msg); });
 #endif
+    std::cout << LOGGER::INFO << "[Boot] ROS command channel ready" << std::endl;
+
+    std::cout << LOGGER::INFO << "[Boot] Setting up arm command subscriber" << std::endl;
     this->SetupArmCommandSubscriber();
+    std::cout << LOGGER::INFO << "[Boot] Setting up arm bridge interface" << std::endl;
     this->SetupArmBridgeInterface();
+    std::cout << LOGGER::INFO << "[Boot] Arm ROS interfaces ready" << std::endl;
 
     // init robot
+    std::cout << LOGGER::INFO << "[Boot] Initializing low-level command/state buffers" << std::endl;
     this->InitLowCmd();
     this->InitJointNum(this->params.Get<int>("num_of_dofs"));
     this->InitOutputs();
     this->InitControl();
+    std::cout << LOGGER::INFO << "[Boot] Low-level buffers ready" << std::endl;
 
     // create lowcmd publisher
+    std::cout << LOGGER::INFO << "[Boot] Creating Unitree lowcmd publisher" << std::endl;
     this->lowcmd_publisher.reset(new ChannelPublisher<unitree_go::msg::dds_::LowCmd_>(TOPIC_LOWCMD));
     this->lowcmd_publisher->InitChannel();
     // create lowstate subscriber
+    std::cout << LOGGER::INFO << "[Boot] Creating Unitree lowstate subscriber" << std::endl;
     this->lowstate_subscriber.reset(new ChannelSubscriber<unitree_go::msg::dds_::LowState_>(TOPIC_LOWSTATE));
     this->lowstate_subscriber->InitChannel(std::bind(&RL_Real_Go2X5::LowStateMessageHandler, this, std::placeholders::_1), 1);
     // create joystick subscriber
+    std::cout << LOGGER::INFO << "[Boot] Creating Unitree joystick subscriber" << std::endl;
     this->joystick_subscriber.reset(new ChannelSubscriber<unitree_go::msg::dds_::WirelessController_>(TOPIC_JOYSTICK));
     this->joystick_subscriber->InitChannel(std::bind(&RL_Real_Go2X5::JoystickHandler, this, std::placeholders::_1), 1);
+    std::cout << LOGGER::INFO << "[Boot] Unitree DDS channels ready" << std::endl;
 
     // init MotionSwitcherClient
+    std::cout << LOGGER::INFO << "[Boot] Initializing MotionSwitcherClient" << std::endl;
     this->msc.SetTimeout(10.0f);
     this->msc.Init();
+    std::cout << LOGGER::INFO << "[Boot] MotionSwitcherClient ready" << std::endl;
     // Shut down motion control-related service
     while (this->QueryMotionStatus())
     {
@@ -82,18 +102,21 @@ RL_Real_Go2X5::RL_Real_Go2X5(int argc, char **argv)
         }
         sleep(1);
     }
+    std::cout << LOGGER::INFO << "[Boot] Motion control-related service released" << std::endl;
 
     std::cout << LOGGER::INFO << "Real deploy target: go2_x5" << std::endl;
     std::cout << LOGGER::INFO << "arm_joint_command_topic: " << this->arm_joint_command_topic
               << ", arm_hold_enabled: " << (this->arm_hold_enabled ? "true" : "false") << std::endl;
 
     // loop
+    std::cout << LOGGER::INFO << "[Boot] Starting control loops" << std::endl;
     this->loop_keyboard = std::make_shared<LoopFunc>("loop_keyboard", 0.05, std::bind(&RL_Real_Go2X5::KeyboardInterface, this));
     this->loop_control = std::make_shared<LoopFunc>("loop_control", this->params.Get<float>("dt"), std::bind(&RL_Real_Go2X5::RobotControl, this));
     this->loop_rl = std::make_shared<LoopFunc>("loop_rl", this->params.Get<float>("dt") * this->params.Get<int>("decimation"), std::bind(&RL_Real_Go2X5::RunModel, this));
     this->loop_keyboard->start();
     this->loop_control->start();
     this->loop_rl->start();
+    std::cout << LOGGER::INFO << "[Boot] Control loops started" << std::endl;
 
 #ifdef PLOT
     this->plot_t = std::vector<int>(this->plot_size, 0);
@@ -1580,7 +1603,9 @@ int main(int argc, char **argv)
         throw std::runtime_error("Invalid arguments");
     }
 
+    std::cout << LOGGER::INFO << "[Boot] ChannelFactory init begin, iface=" << argv[1] << std::endl;
     ChannelFactory::Instance()->Init(0, argv[1]);
+    std::cout << LOGGER::INFO << "[Boot] ChannelFactory init complete" << std::endl;
 
 #if defined(USE_ROS1) && defined(USE_ROS)
     ros::init(argc, argv, "rl_sar_go2_x5", ros::init_options::NoSigintHandler);
@@ -1598,9 +1623,13 @@ int main(int argc, char **argv)
         ros::shutdown();
     }
 #elif defined(USE_ROS2) && defined(USE_ROS)
+    std::cout << LOGGER::INFO << "[Boot] rclcpp init begin" << std::endl;
     rclcpp::init(argc, argv);
+    std::cout << LOGGER::INFO << "[Boot] rclcpp init complete" << std::endl;
     signal(SIGINT, signalHandlerGo2X5);
+    std::cout << LOGGER::INFO << "[Boot] Constructing RL_Real_Go2X5" << std::endl;
     auto rl_sar = std::make_shared<RL_Real_Go2X5>(argc, argv);
+    std::cout << LOGGER::INFO << "[Boot] RL_Real_Go2X5 constructed" << std::endl;
     rclcpp::executors::SingleThreadedExecutor executor;
     executor.add_node(rl_sar->ros2_node);
     while (rclcpp::ok() && !g_shutdown_requested_go2_x5)
