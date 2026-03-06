@@ -46,6 +46,8 @@ int main()
     RequireContains(fsm_content, "arm_lock_pose_runtime.assign(", fsm_file);
     RequireContains(sdk_content, "arm_lock_pose_runtime_valid", sdk_file);
     RequireContains(sdk_content, "arm_joint_start_index", sdk_file);
+    RequireContains(sdk_content, "arm_hold_enabled_local", sdk_file);
+    RequireContains(sdk_content, "arm_hold_position", sdk_file);
 
     std::cout << "go2_x5 arm lock defaults test passed." << std::endl;
     return 0;

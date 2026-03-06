@@ -778,6 +778,34 @@ void RL_Real_Go2X5::WriteArmCommandToExternal(const RobotCommand<float> *command
         arm_tau[static_cast<size_t>(i)] = command->motor_command.tau[idx];
     }
 
+    std::vector<float> arm_hold_local;
+    bool arm_hold_enabled_local = false;
+    {
+        std::lock_guard<std::mutex> lock(this->arm_command_mutex);
+        arm_hold_enabled_local = this->arm_hold_enabled;
+        arm_hold_local = this->arm_hold_position;
+    }
+    if (arm_hold_enabled_local && arm_hold_local.size() == static_cast<size_t>(this->arm_joint_count))
+    {
+        const auto fixed_kp = this->params.Get<std::vector<float>>("fixed_kp", {});
+        const auto fixed_kd = this->params.Get<std::vector<float>>("fixed_kd", {});
+        for (int i = 0; i < this->arm_joint_count; ++i)
+        {
+            const int idx = this->arm_joint_start_index + i;
+            arm_q[static_cast<size_t>(i)] = arm_hold_local[static_cast<size_t>(i)];
+            arm_dq[static_cast<size_t>(i)] = 0.0f;
+            arm_tau[static_cast<size_t>(i)] = 0.0f;
+            if (idx >= 0 && idx < static_cast<int>(fixed_kp.size()))
+            {
+                arm_kp[static_cast<size_t>(i)] = fixed_kp[static_cast<size_t>(idx)];
+            }
+            if (idx >= 0 && idx < static_cast<int>(fixed_kd.size()))
+            {
+                arm_kd[static_cast<size_t>(i)] = fixed_kd[static_cast<size_t>(idx)];
+            }
+        }
+    }
+
     {
         std::lock_guard<std::mutex> lock(this->arm_external_state_mutex);
         this->arm_external_shadow_q = arm_q;
