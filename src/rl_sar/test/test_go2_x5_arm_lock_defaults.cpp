@@ -36,18 +36,20 @@ int main()
     const std::string config_file = source_dir + "/../../policy/go2_x5/robot_lab/config.yaml";
     const std::string fsm_file = source_dir + "/fsm_robot/fsm_go2_x5.hpp";
     const std::string sdk_file = source_dir + "/library/core/rl_sdk/rl_sdk.cpp";
+    const std::string real_file = source_dir + "/src/rl_real_go2_x5.cpp";
 
     const std::string config_content = ReadAll(config_file);
     const std::string fsm_content = ReadAll(fsm_file);
     const std::string sdk_content = ReadAll(sdk_file);
+    const std::string real_content = ReadAll(real_file);
 
     RequireContains(config_content, "arm_lock: false", config_file);
     RequireContains(fsm_content, "arm_joint_start_index", fsm_file);
     RequireContains(fsm_content, "arm_lock_pose_runtime.assign(", fsm_file);
     RequireContains(sdk_content, "arm_lock_pose_runtime_valid", sdk_file);
     RequireContains(sdk_content, "arm_joint_start_index", sdk_file);
-    RequireContains(sdk_content, "arm_hold_enabled_local", sdk_file);
-    RequireContains(sdk_content, "arm_hold_position", sdk_file);
+    RequireContains(real_content, "arm_hold_enabled_local", real_file);
+    RequireContains(real_content, "arm_hold_position", real_file);
 
     std::cout << "go2_x5 arm lock defaults test passed." << std::endl;
     return 0;

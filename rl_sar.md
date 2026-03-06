@@ -99,6 +99,10 @@
   - `ls -l /dev/ttyACM* /dev/ttyUSB* 2>/dev/null`
   - `ls -l /dev/serial/by-id/ 2>/dev/null`
 - 推荐优先使用 `/dev/serial/by-id/...` 的稳定路径；如果只能用 `ttyACM*`，必须先确认当前实际编号，再执行 `./scripts/setup_arx_can.sh <实际设备> can0 8`。
+- `ros2 topic echo /arx_x5/joint_state` 本身是只读，不会直接发机械臂命令；真正的风险来自仍存活的 `/arx_x5/joint_cmd` 发布器。
+- 当前已新增 bridge 安全门：`accept_commands:=false` 时，bridge 默认为只读模式，会忽略全部 `/arx_x5/joint_cmd`。
+- 以后任何“先读取状态再决定是否联动”的场景，先用只读 bridge：
+  - `ros2 run rl_sar arx_x5_bridge.py --ros-args -p interface_name:=can0 -p require_sdk:=true -p require_initial_state:=true -p accept_commands:=false`
 
 ### 背景
 - Go2 + X5 的 sim2real 排障继续推进，机械臂 CAN 链路从“无响应”推进到“ARX SDK 可成功初始化，bridge 可稳定运行”。

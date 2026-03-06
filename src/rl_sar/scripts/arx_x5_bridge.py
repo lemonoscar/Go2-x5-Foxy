@@ -447,6 +447,7 @@ class ArxX5BridgeNode(Node):
         self.declare_parameter("publish_rate_hz", 200.0)
         self.declare_parameter("command_speed", 0.4)
         self.declare_parameter("cmd_timeout_sec", 0.5)
+        self.declare_parameter("accept_commands", False)
         self.declare_parameter("dry_run", False)
         self.declare_parameter("sdk_root", "")
         self.declare_parameter("sdk_python_path", "")
@@ -468,6 +469,7 @@ class ArxX5BridgeNode(Node):
         self.publish_rate_hz = float(self.get_parameter("publish_rate_hz").value)
         self.command_speed = float(self.get_parameter("command_speed").value)
         self.cmd_timeout_sec = float(self.get_parameter("cmd_timeout_sec").value)
+        self.accept_commands = bool(self.get_parameter("accept_commands").value)
         self.dry_run = bool(self.get_parameter("dry_run").value)
         self.sdk_root = str(self.get_parameter("sdk_root").value) or os.environ.get("ARX5_SDK_ROOT", "")
         self.sdk_python_path = str(self.get_parameter("sdk_python_path").value)
@@ -489,6 +491,7 @@ class ArxX5BridgeNode(Node):
         self.last_kd = [0.0] * self.joint_count
         self.last_cmd_stamp = time.monotonic()
         self.recv_cmd = False
+        self.ignore_cmd_warned = False
         self.last_stale_warn_stamp = 0.0
 
         self.backend = None
@@ -544,8 +547,14 @@ class ArxX5BridgeNode(Node):
 
         self.get_logger().info(
             f"ARX bridge started: model={self.model}, iface={self.interface_name}, "
-            f"cmd_topic={self.cmd_topic}, state_topic={self.state_topic}, N={self.joint_count}"
+            f"cmd_topic={self.cmd_topic}, state_topic={self.state_topic}, N={self.joint_count}, "
+            f"accept_commands={self.accept_commands}"
         )
+        if not self.accept_commands:
+            self.get_logger().warning(
+                "ARX bridge is in read-only mode. Incoming /arx_x5/joint_cmd will be ignored until "
+                "accept_commands:=true is set on startup."
+            )
 
     def _probe_backend(self) -> Tuple[bool, str]:
         probe_config = {
@@ -612,6 +621,14 @@ class ArxX5BridgeNode(Node):
         )
 
     def _on_cmd(self, msg: Float32MultiArray) -> None:
+        if not self.accept_commands:
+            if not self.ignore_cmd_warned:
+                self.ignore_cmd_warned = True
+                self.get_logger().warning(
+                    "Ignore /arx_x5/joint_cmd because bridge is in read-only mode "
+                    "(accept_commands=false)."
+                )
+            return
         n = self.joint_count
         if len(msg.data) < n:
             self.get_logger().warning("Ignore arm cmd: insufficient data length.")

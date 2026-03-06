@@ -20,6 +20,7 @@ def generate_launch_description():
     arm_publish_rate_hz = LaunchConfiguration("arm_publish_rate_hz")
     arm_command_speed = LaunchConfiguration("arm_command_speed")
     arm_cmd_timeout_sec = LaunchConfiguration("arm_cmd_timeout_sec")
+    arm_accept_commands = LaunchConfiguration("arm_accept_commands")
     arm_dry_run = LaunchConfiguration("arm_dry_run")
     arm_sdk_root = LaunchConfiguration("arm_sdk_root")
     arm_sdk_python_path = LaunchConfiguration("arm_sdk_python_path")
@@ -53,6 +54,7 @@ def generate_launch_description():
                 "publish_rate_hz": arm_publish_rate_hz,
                 "command_speed": arm_command_speed,
                 "cmd_timeout_sec": arm_cmd_timeout_sec,
+                "accept_commands": arm_accept_commands,
                 "dry_run": arm_dry_run,
                 "sdk_root": arm_sdk_root,
                 "sdk_python_path": arm_sdk_python_path,
@@ -90,6 +92,7 @@ def generate_launch_description():
             DeclareLaunchArgument("arm_publish_rate_hz", default_value="200.0"),
             DeclareLaunchArgument("arm_command_speed", default_value="0.4"),
             DeclareLaunchArgument("arm_cmd_timeout_sec", default_value="0.5"),
+            DeclareLaunchArgument("arm_accept_commands", default_value="false"),
             DeclareLaunchArgument("arm_dry_run", default_value="false"),
             DeclareLaunchArgument("arm_sdk_root", default_value=EnvironmentVariable("ARX5_SDK_ROOT", default_value="")),
             DeclareLaunchArgument("arm_sdk_python_path", default_value=EnvironmentVariable("ARX5_SDK_PYTHON_PATH", default_value="")),

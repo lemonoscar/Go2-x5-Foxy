@@ -53,11 +53,16 @@ int main()
         launch_content,
         "DeclareLaunchArgument(\"arm_probe_timeout_sec\", default_value=\"5.0\")",
         launch_file);
+    RequireContains(
+        launch_content,
+        "DeclareLaunchArgument(\"arm_accept_commands\", default_value=\"false\")",
+        launch_file);
 
     RequireContains(bridge_content, "self.declare_parameter(\"require_sdk\", False)", bridge_file);
     RequireContains(bridge_content, "self.declare_parameter(\"require_initial_state\", False)", bridge_file);
     RequireContains(bridge_content, "self.declare_parameter(\"probe_backend_before_init\", True)", bridge_file);
     RequireContains(bridge_content, "self.declare_parameter(\"probe_timeout_sec\", 5.0)", bridge_file);
+    RequireContains(bridge_content, "self.declare_parameter(\"accept_commands\", False)", bridge_file);
 
     std::cout << "go2_x5 arm bridge defaults test passed." << std::endl;
     return 0;
