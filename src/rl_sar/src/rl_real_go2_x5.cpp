@@ -43,10 +43,15 @@ RL_Real_Go2X5::RL_Real_Go2X5(int argc, char **argv)
 #if defined(USE_ROS1) && defined(USE_ROS)
     std::cout << LOGGER::INFO << "[Boot] Creating ROS1 node handle" << std::endl;
     this->ros1_nh = std::make_shared<ros::NodeHandle>();
+    std::cout << LOGGER::INFO << "[Boot] Creating /cmd_vel publisher" << std::endl;
+    this->cmd_vel_publisher = this->ros1_nh->advertise<geometry_msgs::Twist>("/cmd_vel", 10);
     this->cmd_vel_subscriber = this->ros1_nh->subscribe<geometry_msgs::Twist>("/cmd_vel", 10, &RL_Real_Go2X5::CmdvelCallback, this);
 #elif defined(USE_ROS2) && defined(USE_ROS)
     std::cout << LOGGER::INFO << "[Boot] Creating ROS2 node" << std::endl;
     ros2_node = std::make_shared<rclcpp::Node>("rl_real_go2_x5_node");
+    std::cout << LOGGER::INFO << "[Boot] Creating /cmd_vel publisher" << std::endl;
+    this->cmd_vel_publisher = ros2_node->create_publisher<geometry_msgs::msg::Twist>(
+        "/cmd_vel", rclcpp::SystemDefaultsQoS());
     std::cout << LOGGER::INFO << "[Boot] Creating /cmd_vel subscription" << std::endl;
     this->cmd_vel_subscriber = ros2_node->create_subscription<geometry_msgs::msg::Twist>(
         "/cmd_vel", rclcpp::SystemDefaultsQoS(),
@@ -998,6 +1003,7 @@ void RL_Real_Go2X5::RobotControl()
     this->GetState(&this->robot_state);
 
     this->StateController(&this->robot_state, &this->robot_command);
+    this->MaybePublishKey1CmdVel();
 
     if (this->control.current_keyboard == Input::Keyboard::Num2)
     {
@@ -1086,6 +1092,56 @@ void RL_Real_Go2X5::RobotControl()
     this->control.ClearInput();
 
     this->SetCommand(&this->robot_command);
+}
+
+void RL_Real_Go2X5::MaybePublishKey1CmdVel()
+{
+#if !defined(USE_CMAKE) && defined(USE_ROS)
+    if (this->control.current_keyboard != Input::Keyboard::Num1 || !this->control.navigation_mode)
+    {
+        return;
+    }
+    if (!this->params.Get<bool>("key1_publish_cmd_vel_on_navigation", true))
+    {
+        return;
+    }
+
+#if defined(USE_ROS1) && defined(USE_ROS)
+    geometry_msgs::Twist msg;
+#elif defined(USE_ROS2) && defined(USE_ROS)
+    geometry_msgs::msg::Twist msg;
+#endif
+    msg.linear.x = this->params.Get<float>("key1_navigation_cmd_x", 0.5f);
+    msg.linear.y = this->params.Get<float>("key1_navigation_cmd_y", 0.0f);
+    msg.linear.z = 0.0f;
+    msg.angular.x = 0.0f;
+    msg.angular.y = 0.0f;
+    msg.angular.z = this->params.Get<float>("key1_navigation_cmd_yaw", 0.0f);
+
+    {
+        std::lock_guard<std::mutex> lock(this->cmd_vel_mutex);
+        this->cmd_vel = msg;
+        this->cmd_vel_filtered = msg;
+        this->cmd_vel_has_filtered = true;
+    }
+
+#if defined(USE_ROS1) && defined(USE_ROS)
+    if (this->cmd_vel_publisher)
+    {
+        this->cmd_vel_publisher.publish(msg);
+    }
+#elif defined(USE_ROS2) && defined(USE_ROS)
+    if (this->cmd_vel_publisher)
+    {
+        this->cmd_vel_publisher->publish(msg);
+    }
+#endif
+
+    std::cout << std::endl << LOGGER::INFO
+              << "Key[1] pressed: publish /cmd_vel x=" << msg.linear.x
+              << " y=" << msg.linear.y
+              << " yaw=" << msg.angular.z << std::endl;
+#endif
 }
 
 void RL_Real_Go2X5::RunModel()

@@ -1,5 +1,64 @@
 # rl_sar Change Log
 
+## 2026-03-06
+
+### WARNING
+- USB-CAN 设备的 `/dev/ttyACM*` 编号不是固定值，不要写死成 `/dev/ttyACM0`。
+- 现场联调前先执行：
+  - `ls -l /dev/ttyACM* /dev/ttyUSB* 2>/dev/null`
+  - `ls -l /dev/serial/by-id/ 2>/dev/null`
+- 推荐优先使用 `/dev/serial/by-id/...` 的稳定路径；如果只能用 `ttyACM*`，必须先确认当前实际编号，再执行 `./scripts/setup_arx_can.sh <实际设备> can0 8`。
+
+### 背景
+- Go2 + X5 的 sim2real 排障继续推进，机械臂 CAN 链路从“无响应”推进到“ARX SDK 可成功初始化，bridge 可稳定运行”。
+- `go2_x5` 双进程链路已明确需要拆分 DDS：
+  - `arx_x5_bridge.py` 使用 `rmw_cyclonedds_cpp`
+  - `rl_real_go2_x5` 使用 `rmw_fastrtps_cpp`
+- 当前剩余主问题已从机械臂桥接收敛到 `rl_real_go2_x5` 自身：在正确 RMW 组合下，主控仍会持续打印 `bad_alloc caught: std::bad_alloc`。
+
+### 改动
+
+#### 1) X5 桥接链路验证完成
+- 结论：
+  - `setup_arx_can.sh` + `can0` + ARX SDK 在 Jetson 侧可成功 bringup。
+  - `arx_x5_bridge.py` 在 strict 模式下可成功通过 probe 并进入真实 backend。
+- 结果：
+  - 机械臂桥接不再是当前主阻塞点。
+
+#### 2) DDS 运行约束进一步固化
+- 结论：
+  - 不能把 `go2_x5` 全流程都强制成 `rmw_cyclonedds_cpp`。
+  - 单独直跑 `rl_real_go2_x5` 时，`RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` 会触发 ROS2 domain 初始化失败。
+- 建议固定组合：
+  - `arx_x5_bridge.py` -> `rmw_cyclonedds_cpp`
+  - `rl_real_go2_x5` -> `rmw_fastrtps_cpp`
+
+#### 3) Go2-X5 真机键盘流程澄清
+- 结论：
+  - `0` 只负责从 passive 切到 `GetUp`
+  - `1` 才负责进入 `RLLocomotion`
+- 结果：
+  - “按下 0 没有直接开始走”不是控制语义错误，而是当前 FSM 设计如此。
+
+#### 4) `rl_real_go2_x5` 启动诊断日志增强
+- 文件：`src/rl_sar/src/rl_real_go2_x5.cpp`
+- 改动：
+  - 新增 `[Boot] ...` 启动阶段日志，覆盖：
+    - `ChannelFactory` 初始化
+    - `rclcpp::init`
+    - ROS2 node 和 `/cmd_vel` 订阅创建
+    - arm ROS interface 建立
+    - Unitree DDS channel 建立
+    - `MotionSwitcherClient` 初始化
+    - control loop 启动
+- 结果：
+  - 下一轮 Jetson 复现实验时，可以直接判断 `bad_alloc` 卡在启动链路的哪一步，而不是只看到最终刷屏。
+
+#### 5) 当前未闭环问题
+- `rl_real_go2_x5` 在正确的 RMW 组合下仍会持续输出 `bad_alloc caught: std::bad_alloc`。
+- 从最新日志看，问题更像 `go2` 主控侧早期启动链路，而不是 X5 bridge。
+- 下一步排查需要基于新的 `[Boot]` 日志继续收敛。
+
 ## 2026-03-05
 
 ### 背景

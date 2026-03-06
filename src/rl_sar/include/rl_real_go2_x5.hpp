@@ -146,6 +146,7 @@ private:
     void PublishWholeBodyPose(const std::vector<float>& pose,
                               const std::vector<float>& kp,
                               const std::vector<float>& kd);
+    void MaybePublishKey1CmdVel();
 
     // others
     std::vector<float> mapped_joint_positions;
@@ -199,6 +200,7 @@ private:
     std::shared_ptr<ros::NodeHandle> ros1_nh;
     geometry_msgs::Twist cmd_vel;
     geometry_msgs::Twist cmd_vel_filtered;
+    ros::Publisher cmd_vel_publisher;
     ros::Subscriber cmd_vel_subscriber;
     ros::Subscriber arm_joint_command_subscriber;
     ros::Publisher arm_bridge_cmd_publisher;
@@ -209,6 +211,7 @@ private:
 #elif defined(USE_ROS2) && defined(USE_ROS)
     geometry_msgs::msg::Twist cmd_vel;
     geometry_msgs::msg::Twist cmd_vel_filtered;
+    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_publisher;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_subscriber;
     rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr arm_joint_command_subscriber;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr arm_bridge_cmd_publisher;

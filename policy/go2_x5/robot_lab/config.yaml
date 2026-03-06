@@ -71,6 +71,11 @@ go2_x5/robot_lab:
   # true  -> enter RL + navigation mode ON (use /cmd_vel as command source)
   # false -> enter RL + fixed_cmd_*
   key1_prefer_navigation_mode: true
+  # When Key[1] enters navigation mode, also inject/publish one /cmd_vel command.
+  key1_publish_cmd_vel_on_navigation: true
+  key1_navigation_cmd_x: 0.5
+  key1_navigation_cmd_y: 0.0
+  key1_navigation_cmd_yaw: 0.0
   torque_limits: [23.5, 23.5, 23.5,
                   23.5, 23.5, 23.5,
                   23.5, 23.5, 23.5,
