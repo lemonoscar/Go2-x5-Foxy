@@ -7,7 +7,9 @@ import json
 import math
 import os
 import platform
+import socket
 import subprocess
+import struct
 import sys
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -141,6 +143,49 @@ def _summarize_process_output(stdout_text: str, stderr_text: str) -> str:
     if not lines:
         return ""
     return " | ".join(lines[-6:])
+
+
+_IPC_PROTOCOL_VERSION = 1
+_IPC_CMD_MAGIC = b"GX5C"
+_IPC_STATE_MAGIC = b"GX5S"
+_IPC_CMD_HEADER = struct.Struct("<4sHH")
+_IPC_STATE_HEADER = struct.Struct("<4sHHI")
+
+
+def _serialize_state_packet(
+    joint_count: int,
+    q: Sequence[float],
+    dq: Sequence[float],
+    tau: Sequence[float],
+    state_from_backend: bool,
+) -> bytes:
+    flags = 1 if state_from_backend else 0
+    payload = bytearray(_IPC_STATE_HEADER.pack(_IPC_STATE_MAGIC, _IPC_PROTOCOL_VERSION, joint_count, flags))
+    for values in (q, dq, tau):
+        for i in range(joint_count):
+            payload.extend(struct.pack("<f", float(values[i]) if i < len(values) else 0.0))
+    return bytes(payload)
+
+
+def _parse_command_packet(data: bytes) -> Tuple[Optional[List[float]], Optional[List[float]], Optional[List[float]], Optional[List[float]], Optional[List[float]], str]:
+    if len(data) < _IPC_CMD_HEADER.size:
+        return None, None, None, None, None, "packet too short"
+    magic, version, joint_count = _IPC_CMD_HEADER.unpack_from(data, 0)
+    if magic != _IPC_CMD_MAGIC:
+        return None, None, None, None, None, "invalid command packet magic"
+    if version != _IPC_PROTOCOL_VERSION:
+        return None, None, None, None, None, f"unsupported command packet version {version}"
+    expected = _IPC_CMD_HEADER.size + joint_count * 5 * 4
+    if len(data) != expected:
+        return None, None, None, None, None, f"unexpected command packet size {len(data)} != {expected}"
+
+    offset = _IPC_CMD_HEADER.size
+    vectors: List[List[float]] = []
+    for _ in range(5):
+        values = list(struct.unpack_from(f"<{joint_count}f", data, offset))
+        vectors.append(values)
+        offset += joint_count * 4
+    return vectors[0], vectors[1], vectors[2], vectors[3], vectors[4], ""
 
 
 class ArxBackend:
@@ -482,6 +527,11 @@ class ArxX5BridgeNode(Node):
         self.declare_parameter("kp_abs_limit", 100.0)
         self.declare_parameter("kd_abs_limit", 20.0)
         self.declare_parameter("tau_abs_limit", 20.0)
+        self.declare_parameter("ipc_enabled", False)
+        self.declare_parameter("ipc_bind_host", "127.0.0.1")
+        self.declare_parameter("ipc_cmd_port", 45671)
+        self.declare_parameter("ipc_state_host", "127.0.0.1")
+        self.declare_parameter("ipc_state_port", 45672)
 
         self.model = str(self.get_parameter("model").value)
         self.interface_name = str(self.get_parameter("interface_name").value)
@@ -511,6 +561,11 @@ class ArxX5BridgeNode(Node):
         self.kp_abs_limit = max(0.0, float(self.get_parameter("kp_abs_limit").value))
         self.kd_abs_limit = max(0.0, float(self.get_parameter("kd_abs_limit").value))
         self.tau_abs_limit = max(0.0, float(self.get_parameter("tau_abs_limit").value))
+        self.ipc_enabled = bool(self.get_parameter("ipc_enabled").value)
+        self.ipc_bind_host = str(self.get_parameter("ipc_bind_host").value)
+        self.ipc_cmd_port = int(self.get_parameter("ipc_cmd_port").value)
+        self.ipc_state_host = str(self.get_parameter("ipc_state_host").value)
+        self.ipc_state_port = int(self.get_parameter("ipc_state_port").value)
 
         self._prepare_sdk_environment()
 
@@ -525,6 +580,8 @@ class ArxX5BridgeNode(Node):
         self.last_stale_warn_stamp = 0.0
         self.last_invalid_cmd_warn_stamp = 0.0
         self.state_from_backend = False
+        self._ipc_cmd_socket: Optional[socket.socket] = None
+        self._ipc_state_socket: Optional[socket.socket] = None
 
         self.backend = None
         if self.dry_run:
@@ -579,6 +636,9 @@ class ArxX5BridgeNode(Node):
                     self.last_kp = [0.0] * self.joint_count
                     self.last_kd = [0.0] * self.joint_count
 
+        if self.ipc_enabled:
+            self._setup_ipc()
+
         self.sub_cmd = self.create_subscription(Float32MultiArray, self.cmd_topic, self._on_cmd, 10)
         self.pub_state = self.create_publisher(Float32MultiArray, self.state_topic, 10)
 
@@ -589,7 +649,7 @@ class ArxX5BridgeNode(Node):
         self.get_logger().info(
             f"ARX bridge started: model={self.model}, iface={self.interface_name}, "
             f"cmd_topic={self.cmd_topic}, state_topic={self.state_topic}, N={self.joint_count}, "
-            f"accept_commands={self.accept_commands}"
+            f"accept_commands={self.accept_commands}, ipc_enabled={self.ipc_enabled}"
         )
         if not self.accept_commands:
             self.get_logger().warning(
@@ -738,15 +798,110 @@ class ArxX5BridgeNode(Node):
             logger=self.get_logger(),
         )
 
-    def _on_cmd(self, msg: Float32MultiArray) -> None:
+    def _setup_ipc(self) -> None:
+        cmd_socket: Optional[socket.socket] = None
+        state_socket: Optional[socket.socket] = None
+        try:
+            cmd_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            cmd_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            cmd_socket.bind((self.ipc_bind_host, self.ipc_cmd_port))
+            cmd_socket.setblocking(False)
+
+            state_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            state_socket.setblocking(False)
+        except OSError as ex:
+            if cmd_socket is not None:
+                cmd_socket.close()
+            if state_socket is not None:
+                state_socket.close()
+            raise RuntimeError(
+                f"Failed to set up arm bridge IPC on {self.ipc_bind_host}:{self.ipc_cmd_port} -> "
+                f"{self.ipc_state_host}:{self.ipc_state_port}: {ex}"
+            ) from ex
+
+        self._ipc_cmd_socket = cmd_socket
+        self._ipc_state_socket = state_socket
+        self.get_logger().info(
+            f"Arm bridge IPC ready: bind={self.ipc_bind_host}:{self.ipc_cmd_port}, "
+            f"state_target={self.ipc_state_host}:{self.ipc_state_port}"
+        )
+
+    def _close_ipc(self) -> None:
+        if self._ipc_cmd_socket is not None:
+            self._ipc_cmd_socket.close()
+            self._ipc_cmd_socket = None
+        if self._ipc_state_socket is not None:
+            self._ipc_state_socket.close()
+            self._ipc_state_socket = None
+
+    def _apply_command(
+        self,
+        q: Sequence[float],
+        dq: Sequence[float],
+        kp: Sequence[float],
+        kd: Sequence[float],
+        tau: Sequence[float],
+        source: str,
+    ) -> None:
         if not self.accept_commands:
             if not self.ignore_cmd_warned:
                 self.ignore_cmd_warned = True
                 self.get_logger().warning(
-                    "Ignore /arx_x5/joint_cmd because bridge is in read-only mode "
+                    f"Ignore {source} because bridge is in read-only mode "
                     "(accept_commands=false)."
                 )
             return
+
+        q, dq, kp, kd, tau, _ = self._clip_command(q, dq, kp, kd, tau)
+        self.last_q = q
+        self.last_dq = dq
+        self.last_kp = kp
+        self.last_kd = kd
+        self.last_tau = tau
+        self.last_cmd_stamp = time.monotonic()
+        self.recv_cmd = True
+
+    def _drain_ipc_commands(self) -> None:
+        if not self.ipc_enabled or self._ipc_cmd_socket is None:
+            return
+
+        while True:
+            try:
+                data, _ = self._ipc_cmd_socket.recvfrom(4096)
+            except BlockingIOError:
+                break
+            except OSError as ex:
+                self.get_logger().warning(f"Arm bridge IPC recv failed: {ex}")
+                break
+
+            q, dq, kp, kd, tau, error = _parse_command_packet(data)
+            if q is None or dq is None or kp is None or kd is None or tau is None:
+                self._warn_invalid_command(f"Ignore arm bridge IPC cmd: {error}.")
+                continue
+            if len(q) != self.joint_count:
+                self._warn_invalid_command(
+                    f"Ignore arm bridge IPC cmd: expect {self.joint_count} joints, got {len(q)}."
+                )
+                continue
+            self._apply_command(q, dq, kp, kd, tau, "arm bridge IPC")
+
+    def _send_ipc_state(self) -> None:
+        if not self.ipc_enabled or self._ipc_state_socket is None:
+            return
+
+        payload = _serialize_state_packet(
+            self.joint_count,
+            self.last_q,
+            self.last_dq,
+            self.last_tau,
+            self.state_from_backend,
+        )
+        try:
+            self._ipc_state_socket.sendto(payload, (self.ipc_state_host, self.ipc_state_port))
+        except OSError as ex:
+            self.get_logger().warning(f"Arm bridge IPC state send failed: {ex}")
+
+    def _on_cmd(self, msg: Float32MultiArray) -> None:
         n = self.joint_count
         if len(msg.data) < n:
             self.get_logger().warning("Ignore arm cmd: insufficient data length.")
@@ -765,16 +920,7 @@ class ArxX5BridgeNode(Node):
             kd = [float(x) for x in msg.data[3 * n:4 * n]]
         if len(msg.data) >= 5 * n:
             tau = [float(x) for x in msg.data[4 * n:5 * n]]
-
-        q, dq, kp, kd, tau, _ = self._clip_command(q, dq, kp, kd, tau)
-
-        self.last_q = q
-        self.last_dq = dq
-        self.last_kp = kp
-        self.last_kd = kd
-        self.last_tau = tau
-        self.last_cmd_stamp = time.monotonic()
-        self.recv_cmd = True
+        self._apply_command(q, dq, kp, kd, tau, "/arx_x5/joint_cmd")
 
     def _publish_state(self) -> None:
         msg = Float32MultiArray()
@@ -784,6 +930,7 @@ class ArxX5BridgeNode(Node):
         self.pub_state.publish(msg)
 
     def _on_timer(self) -> None:
+        self._drain_ipc_commands()
         now = time.monotonic()
         stale = (now - self.last_cmd_stamp) > self.cmd_timeout_sec
 
@@ -825,8 +972,10 @@ class ArxX5BridgeNode(Node):
                 self.last_tau[i] = 0.0
 
         self._publish_state()
+        self._send_ipc_state()
 
     def destroy_node(self):
+        self._close_ipc()
         if self.backend is not None:
             self.backend.stop()
         super().destroy_node()

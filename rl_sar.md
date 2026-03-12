@@ -1,5 +1,48 @@
 # rl_sar Change Log
 
+## 2026-03-12
+
+### go2_x5 主控去 ROS2 Runtime 化
+
+#### 背景
+- `rl_real_go2_x5` 在 Jetson/Foxy 真机上会卡在 `[Boot] Creating ROS2 node`，随后反复打印 `bad_alloc caught: std::bad_alloc`。
+- 当前现象已经确认不是 `can0`、不是 `arx_x5_bridge.py`、也不是 `/arm_joint_pos_cmd` 的消息格式问题，而是主控进程内 `Unitree SDK2 + ROS2 DDS` 的运行时冲突。
+
+#### 改动
+- `rl_real_go2_x5` 新增运行时开关：
+  - `--enable-ros2-runtime true|false`
+  - `--arm-bridge-transport ros|ipc`
+  - `--arm-bridge-ipc-host`
+  - `--arm-bridge-cmd-port`
+  - `--arm-bridge-state-port`
+- 新增 `go2_x5` 本地 IPC 协议，使用 localhost UDP 在主控与 `arx_x5_bridge.py` 之间传递：
+  - 机械臂命令：`rl_real_go2_x5 -> arx_x5_bridge.py`
+  - 机械臂状态：`arx_x5_bridge.py -> rl_real_go2_x5`
+- `arx_x5_bridge.py` 保留原 ROS2 topic：
+  - `/arx_x5/joint_cmd`
+  - `/arx_x5/joint_state`
+- `go2_x5_real_dual.launch.py` 默认切到：
+  - `go2_enable_ros2_runtime:=false`
+  - `go2_arm_bridge_transport:=ipc`
+  - `arm_ipc_enabled:=true`
+- 结果：
+  - `rl_real_go2_x5` 默认不再创建 `rclcpp::Node`
+  - 机械臂 bridge 仍可保留 ROS2 可观测性
+  - 主控与机械臂联动不再依赖主控进程内 DDS
+
+#### 验证
+- `python3 -m py_compile src/rl_sar/scripts/arx_x5_bridge.py src/rl_sar/launch/go2_x5_real_dual.launch.py`
+- standalone CMake 构建通过：
+  - `test_go2_x5_ipc_protocol`
+  - `test_go2_x5_control_logic`
+  - `test_go2_x5_arm_bridge_defaults`
+  - `test_go2_x5_arm_lock_defaults`
+  - `test_joint_mapping_validation`
+  - `test_loop_exception_handler`
+  - `test_loop_timing_precision`
+- 说明：
+  - `test_go2_x5_arm_safety_guards` 在当前工作区失败，原因是本地未提交的 `policy/go2_x5/base.yaml` 已被改成 `key2_prefer_topic_command: false`，与该测试假设的仓库默认值不一致，不是本轮 IPC 改动引入的新失败。
+
 ## 2026-03-06
 
 ### 冷启动恢复与再联通成功经验

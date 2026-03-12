@@ -6,17 +6,178 @@
 #include "rl_real_go2_x5.hpp"
 #include "go2_x5_control_logic.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <iomanip>
 #include <limits>
 #include <stdexcept>
 #include <thread>
 
+#if defined(__linux__)
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
+namespace
+{
+
+struct Go2X5RuntimeOptions
+{
+    bool enable_ros2_runtime = true;
+    std::string arm_bridge_transport = "ros";
+    bool arm_bridge_transport_explicit = false;
+    std::string arm_bridge_ipc_host = Go2X5IPC::kDefaultHost;
+    int arm_bridge_cmd_port = Go2X5IPC::kDefaultCommandPort;
+    int arm_bridge_state_port = Go2X5IPC::kDefaultStatePort;
+};
+
+std::string ToLowerCopy(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+bool ParseBoolArgValue(const std::string& raw_value, const bool fallback)
+{
+    const std::string value = ToLowerCopy(raw_value);
+    if (value == "1" || value == "true" || value == "yes" || value == "on")
+    {
+        return true;
+    }
+    if (value == "0" || value == "false" || value == "no" || value == "off")
+    {
+        return false;
+    }
+    return fallback;
+}
+
+int ParseIntArgValue(const std::string& raw_value, const int fallback)
+{
+    try
+    {
+        return std::stoi(raw_value);
+    }
+    catch (...)
+    {
+        return fallback;
+    }
+}
+
+Go2X5RuntimeOptions ParseGo2X5RuntimeOptions(int argc, char **argv)
+{
+    Go2X5RuntimeOptions options;
+    for (int i = 2; i < argc; ++i)
+    {
+        const std::string arg = argv[i];
+        if (arg == "--disable-ros2-runtime")
+        {
+            options.enable_ros2_runtime = false;
+            continue;
+        }
+        if (arg == "--enable-ros2-runtime" && (i + 1) < argc)
+        {
+            options.enable_ros2_runtime = ParseBoolArgValue(argv[++i], options.enable_ros2_runtime);
+            continue;
+        }
+        if (arg == "--arm-bridge-transport" && (i + 1) < argc)
+        {
+            options.arm_bridge_transport = argv[++i];
+            options.arm_bridge_transport_explicit = true;
+            continue;
+        }
+        if (arg == "--arm-bridge-ipc-host" && (i + 1) < argc)
+        {
+            options.arm_bridge_ipc_host = argv[++i];
+            continue;
+        }
+        if (arg == "--arm-bridge-cmd-port" && (i + 1) < argc)
+        {
+            options.arm_bridge_cmd_port = ParseIntArgValue(argv[++i], options.arm_bridge_cmd_port);
+            continue;
+        }
+        if (arg == "--arm-bridge-state-port" && (i + 1) < argc)
+        {
+            options.arm_bridge_state_port = ParseIntArgValue(argv[++i], options.arm_bridge_state_port);
+            continue;
+        }
+    }
+
+    if (!options.arm_bridge_transport_explicit && !options.enable_ros2_runtime)
+    {
+        options.arm_bridge_transport = "ipc";
+    }
+    options.arm_bridge_transport = Go2X5IPC::NormalizeTransport(options.arm_bridge_transport);
+    if (options.arm_bridge_transport != "ros" && !Go2X5IPC::IsIpcTransport(options.arm_bridge_transport))
+    {
+        options.arm_bridge_transport = options.enable_ros2_runtime ? "ros" : "ipc";
+    }
+    if (options.arm_bridge_ipc_host.empty())
+    {
+        options.arm_bridge_ipc_host = Go2X5IPC::kDefaultHost;
+    }
+    if (options.arm_bridge_cmd_port <= 0)
+    {
+        options.arm_bridge_cmd_port = Go2X5IPC::kDefaultCommandPort;
+    }
+    if (options.arm_bridge_state_port <= 0)
+    {
+        options.arm_bridge_state_port = Go2X5IPC::kDefaultStatePort;
+    }
+    return options;
+}
+
+#if defined(USE_ROS2) && defined(USE_ROS)
+std::vector<char*> BuildRos2Argv(int argc, char **argv)
+{
+    std::vector<char*> filtered;
+    filtered.reserve(static_cast<size_t>(argc));
+    for (int i = 0; i < argc; ++i)
+    {
+        const std::string arg = argv[i];
+        const bool consumes_next =
+            (arg == "--enable-ros2-runtime" ||
+             arg == "--arm-bridge-transport" ||
+             arg == "--arm-bridge-ipc-host" ||
+             arg == "--arm-bridge-cmd-port" ||
+             arg == "--arm-bridge-state-port");
+        if (arg == "--disable-ros2-runtime")
+        {
+            continue;
+        }
+        if (consumes_next)
+        {
+            ++i;
+            continue;
+        }
+        filtered.push_back(argv[i]);
+    }
+    return filtered;
+}
+#endif
+
+#if defined(__linux__)
+bool MakeIpv4Endpoint(const std::string& host, const int port, sockaddr_in& addr)
+{
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(static_cast<uint16_t>(port));
+    return inet_pton(AF_INET, host.c_str(), &addr.sin_addr) == 1;
+}
+#endif
+
+} // namespace
+
 RL_Real_Go2X5::RL_Real_Go2X5(int argc, char **argv)
 {
     std::cout << LOGGER::INFO << "[Boot] go2_x5 constructor begin" << std::endl;
+    this->InitializeRuntimeOptions(argc, argv);
 
     // read params from yaml
     this->ang_vel_axis = "body";
@@ -50,17 +211,24 @@ RL_Real_Go2X5::RL_Real_Go2X5(int argc, char **argv)
     this->cmd_vel_publisher = this->ros1_nh->advertise<geometry_msgs::Twist>("/cmd_vel", 10);
     this->cmd_vel_subscriber = this->ros1_nh->subscribe<geometry_msgs::Twist>("/cmd_vel", 10, &RL_Real_Go2X5::CmdvelCallback, this);
 #elif defined(USE_ROS2) && defined(USE_ROS)
-    std::cout << LOGGER::INFO << "[Boot] Creating ROS2 node" << std::endl;
-    ros2_node = std::make_shared<rclcpp::Node>("rl_real_go2_x5_node");
-    std::cout << LOGGER::INFO << "[Boot] Creating /cmd_vel publisher" << std::endl;
-    this->cmd_vel_publisher = ros2_node->create_publisher<geometry_msgs::msg::Twist>(
-        "/cmd_vel", rclcpp::SystemDefaultsQoS());
-    std::cout << LOGGER::INFO << "[Boot] Creating /cmd_vel subscription" << std::endl;
-    this->cmd_vel_subscriber = ros2_node->create_subscription<geometry_msgs::msg::Twist>(
-        "/cmd_vel", rclcpp::SystemDefaultsQoS(),
-        [this] (const geometry_msgs::msg::Twist::SharedPtr msg) { this->CmdvelCallback(msg); });
+    if (this->enable_ros2_runtime)
+    {
+        std::cout << LOGGER::INFO << "[Boot] Creating ROS2 node" << std::endl;
+        ros2_node = std::make_shared<rclcpp::Node>("rl_real_go2_x5_node");
+        std::cout << LOGGER::INFO << "[Boot] Creating /cmd_vel publisher" << std::endl;
+        this->cmd_vel_publisher = ros2_node->create_publisher<geometry_msgs::msg::Twist>(
+            "/cmd_vel", rclcpp::SystemDefaultsQoS());
+        std::cout << LOGGER::INFO << "[Boot] Creating /cmd_vel subscription" << std::endl;
+        this->cmd_vel_subscriber = ros2_node->create_subscription<geometry_msgs::msg::Twist>(
+            "/cmd_vel", rclcpp::SystemDefaultsQoS(),
+            [this] (const geometry_msgs::msg::Twist::SharedPtr msg) { this->CmdvelCallback(msg); });
+    }
+    else
+    {
+        std::cout << LOGGER::INFO << "[Boot] ROS2 runtime disabled for rl_real_go2_x5" << std::endl;
+    }
 #endif
-    std::cout << LOGGER::INFO << "[Boot] ROS command channel ready" << std::endl;
+    std::cout << LOGGER::INFO << "[Boot] Runtime command channel setup complete" << std::endl;
 
     std::cout << LOGGER::INFO << "[Boot] Setting up arm command subscriber" << std::endl;
     this->SetupArmCommandSubscriber();
@@ -207,7 +375,25 @@ void RL_Real_Go2X5::SafeShutdownNow()
         std::cout << LOGGER::WARNING << "Safe shutdown sequence failed with unknown error." << std::endl;
     }
     this->arm_safe_shutdown_active.store(false);
+    this->CloseArmBridgeIpc();
     this->safe_shutdown_done = true;
+}
+
+void RL_Real_Go2X5::InitializeRuntimeOptions(int argc, char **argv)
+{
+    const auto options = ParseGo2X5RuntimeOptions(argc, argv);
+    this->enable_ros2_runtime = options.enable_ros2_runtime;
+    this->arm_bridge_transport = options.arm_bridge_transport;
+    this->arm_bridge_ipc_host = options.arm_bridge_ipc_host;
+    this->arm_bridge_cmd_port = options.arm_bridge_cmd_port;
+    this->arm_bridge_state_port = options.arm_bridge_state_port;
+    std::cout << LOGGER::INFO
+              << "[Boot] Runtime options: ros2_runtime=" << (this->enable_ros2_runtime ? "true" : "false")
+              << ", arm_bridge_transport=" << this->arm_bridge_transport
+              << ", ipc_host=" << this->arm_bridge_ipc_host
+              << ", cmd_port=" << this->arm_bridge_cmd_port
+              << ", state_port=" << this->arm_bridge_state_port
+              << std::endl;
 }
 
 std::vector<float> RL_Real_Go2X5::BuildSafeShutdownTargetPose(const std::vector<float>& default_pos) const
@@ -731,6 +917,11 @@ bool RL_Real_Go2X5::UseExclusiveRealDeployControl() const
     return this->real_deploy_exclusive_keyboard_control;
 }
 
+bool RL_Real_Go2X5::UseArmBridgeIpc() const
+{
+    return Go2X5IPC::IsIpcTransport(this->arm_bridge_transport);
+}
+
 std::vector<float> RL_Real_Go2X5::GetDefaultWholeBodyLowerLimits() const
 {
     if (this->params.Get<int>("num_of_dofs") == 18)
@@ -1168,6 +1359,15 @@ bool RL_Real_Go2X5::IsArmBridgeStateFreshLocked() const
 void RL_Real_Go2X5::SetupArmCommandSubscriber()
 {
 #if !defined(USE_CMAKE) && defined(USE_ROS)
+    if (!this->enable_ros2_runtime)
+    {
+        if (!this->arm_joint_command_topic.empty())
+        {
+            std::cout << LOGGER::INFO
+                      << "ROS arm topic subscriber disabled because ROS2 runtime is off." << std::endl;
+        }
+        return;
+    }
     if (this->arm_joint_command_topic.empty())
     {
         return;
@@ -1198,13 +1398,157 @@ void RL_Real_Go2X5::SetupArmCommandSubscriber()
 #endif
 }
 
+void RL_Real_Go2X5::SetupArmBridgeIpc()
+{
+#if defined(__linux__)
+    this->CloseArmBridgeIpc();
+    if (this->arm_joint_count <= 0)
+    {
+        return;
+    }
+
+    sockaddr_in cmd_addr{};
+    if (!MakeIpv4Endpoint(this->arm_bridge_ipc_host, this->arm_bridge_cmd_port, cmd_addr))
+    {
+        std::cout << LOGGER::WARNING
+                  << "Arm bridge IPC disabled: invalid IPv4 host " << this->arm_bridge_ipc_host
+                  << std::endl;
+        return;
+    }
+
+    const int cmd_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (cmd_fd < 0)
+    {
+        std::cout << LOGGER::WARNING << "Arm bridge IPC command socket create failed: "
+                  << std::strerror(errno) << std::endl;
+        return;
+    }
+    const int state_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (state_fd < 0)
+    {
+        std::cout << LOGGER::WARNING << "Arm bridge IPC state socket create failed: "
+                  << std::strerror(errno) << std::endl;
+        close(cmd_fd);
+        return;
+    }
+
+    const int reuse = 1;
+    setsockopt(state_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    fcntl(cmd_fd, F_SETFL, fcntl(cmd_fd, F_GETFL, 0) | O_NONBLOCK);
+    fcntl(state_fd, F_SETFL, fcntl(state_fd, F_GETFL, 0) | O_NONBLOCK);
+
+    sockaddr_in bind_addr{};
+    bind_addr.sin_family = AF_INET;
+    bind_addr.sin_port = htons(static_cast<uint16_t>(this->arm_bridge_state_port));
+    bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(state_fd, reinterpret_cast<sockaddr*>(&bind_addr), sizeof(bind_addr)) != 0)
+    {
+        std::cout << LOGGER::WARNING << "Arm bridge IPC state socket bind failed on port "
+                  << this->arm_bridge_state_port << ": " << std::strerror(errno) << std::endl;
+        close(cmd_fd);
+        close(state_fd);
+        return;
+    }
+    if (connect(cmd_fd, reinterpret_cast<sockaddr*>(&cmd_addr), sizeof(cmd_addr)) != 0)
+    {
+        std::cout << LOGGER::WARNING << "Arm bridge IPC command socket connect failed to "
+                  << this->arm_bridge_ipc_host << ":" << this->arm_bridge_cmd_port
+                  << ": " << std::strerror(errno) << std::endl;
+        close(cmd_fd);
+        close(state_fd);
+        return;
+    }
+
+    this->arm_bridge_cmd_socket_fd = cmd_fd;
+    this->arm_bridge_state_socket_fd = state_fd;
+    std::cout << LOGGER::INFO << "Arm bridge IPC ready. host=" << this->arm_bridge_ipc_host
+              << ", cmd_port=" << this->arm_bridge_cmd_port
+              << ", state_port=" << this->arm_bridge_state_port << std::endl;
+#else
+    std::cout << LOGGER::WARNING << "Arm bridge IPC is unavailable on this platform." << std::endl;
+#endif
+}
+
+void RL_Real_Go2X5::CloseArmBridgeIpc()
+{
+#if defined(__linux__)
+    if (this->arm_bridge_cmd_socket_fd >= 0)
+    {
+        close(this->arm_bridge_cmd_socket_fd);
+        this->arm_bridge_cmd_socket_fd = -1;
+    }
+    if (this->arm_bridge_state_socket_fd >= 0)
+    {
+        close(this->arm_bridge_state_socket_fd);
+        this->arm_bridge_state_socket_fd = -1;
+    }
+#endif
+}
+
+void RL_Real_Go2X5::PollArmBridgeIpcState()
+{
+#if defined(__linux__)
+    if (this->arm_bridge_state_socket_fd < 0 || this->arm_joint_count <= 0)
+    {
+        return;
+    }
+
+    std::array<uint8_t, 2048> buffer{};
+    while (true)
+    {
+        const ssize_t bytes_read = recv(this->arm_bridge_state_socket_fd, buffer.data(), buffer.size(), 0);
+        if (bytes_read < 0)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                break;
+            }
+            std::cout << LOGGER::WARNING << "Arm bridge IPC state recv failed: "
+                      << std::strerror(errno) << std::endl;
+            break;
+        }
+        if (bytes_read == 0)
+        {
+            break;
+        }
+
+        std::vector<uint8_t> bytes(buffer.begin(), buffer.begin() + bytes_read);
+        Go2X5IPC::ArmStatePacket packet;
+        std::string error;
+        if (!Go2X5IPC::ParseStatePacket(bytes, packet, &error))
+        {
+            std::cout << LOGGER::WARNING << "Ignore arm bridge IPC state packet: " << error << std::endl;
+            continue;
+        }
+        if (packet.joint_count != static_cast<uint16_t>(this->arm_joint_count))
+        {
+            std::cout << LOGGER::WARNING << "Ignore arm bridge IPC state packet: expect "
+                      << this->arm_joint_count << " joints, got " << packet.joint_count << std::endl;
+            continue;
+        }
+        std::vector<float> data;
+        data.reserve(static_cast<size_t>(this->arm_joint_count) * 3);
+        data.insert(data.end(), packet.q.begin(), packet.q.end());
+        data.insert(data.end(), packet.dq.begin(), packet.dq.end());
+        data.insert(data.end(), packet.tau.begin(), packet.tau.end());
+        this->HandleArmBridgeStateData(data, packet.state_from_backend, "Arm bridge IPC state");
+    }
+#endif
+}
+
 void RL_Real_Go2X5::SetupArmBridgeInterface()
 {
-#if !defined(USE_CMAKE) && defined(USE_ROS)
     if (!this->arm_split_control_enabled || this->arm_joint_count <= 0)
     {
         return;
     }
+    if (this->UseArmBridgeIpc())
+    {
+        this->SetupArmBridgeIpc();
+        return;
+    }
+
+#if !defined(USE_CMAKE) && defined(USE_ROS)
     if (this->arm_bridge_cmd_topic.empty() || this->arm_bridge_state_topic.empty())
     {
         std::cout << LOGGER::WARNING << "Arm split control enabled but bridge topics are empty." << std::endl;
@@ -1221,8 +1565,11 @@ void RL_Real_Go2X5::SetupArmBridgeInterface()
         this->ros1_nh->subscribe<std_msgs::Float32MultiArray>(
             this->arm_bridge_state_topic, 10, &RL_Real_Go2X5::ArmBridgeStateCallback, this);
 #elif defined(USE_ROS2) && defined(USE_ROS)
-    if (!this->ros2_node)
+    if (!this->enable_ros2_runtime || !this->ros2_node)
     {
+        std::cout << LOGGER::WARNING
+                  << "Arm bridge transport is ROS, but ROS2 runtime is unavailable in rl_real_go2_x5."
+                  << std::endl;
         return;
     }
     this->arm_bridge_cmd_publisher =
@@ -1359,6 +1706,10 @@ void RL_Real_Go2X5::ReadArmStateFromExternal(RobotState<float> *state)
     if (!this->arm_split_control_enabled || this->arm_joint_count <= 0)
     {
         return;
+    }
+    if (this->UseArmBridgeIpc())
+    {
+        this->PollArmBridgeIpcState();
     }
 
     std::lock_guard<std::mutex> lock(this->arm_external_state_mutex);
@@ -1527,6 +1878,28 @@ void RL_Real_Go2X5::WriteArmCommandToExternal(const RobotCommand<float> *command
         std::lock_guard<std::mutex> lock(this->arm_external_state_mutex);
         this->arm_external_shadow_q = arm_q;
         this->arm_external_shadow_dq = arm_dq;
+    }
+
+    if (this->UseArmBridgeIpc())
+    {
+#if defined(__linux__)
+        if (this->arm_bridge_cmd_socket_fd >= 0)
+        {
+            const auto bytes = Go2X5IPC::SerializeCommandPacket(
+                static_cast<uint16_t>(this->arm_joint_count), arm_q, arm_dq, arm_kp, arm_kd, arm_tau);
+            const ssize_t sent = send(
+                this->arm_bridge_cmd_socket_fd,
+                bytes.data(),
+                bytes.size(),
+                0);
+            if (sent < 0)
+            {
+                std::cout << LOGGER::WARNING << "Arm bridge IPC send failed: "
+                          << std::strerror(errno) << std::endl;
+            }
+        }
+#endif
+        return;
     }
 
 #if !defined(USE_CMAKE) && defined(USE_ROS)
@@ -2403,6 +2776,112 @@ void RL_Real_Go2X5::JoystickHandler(const void *message)
     this->unitree_joy_rx = msg->rx();
 }
 
+void RL_Real_Go2X5::HandleArmJointCommandData(const std::vector<float>& data, const char* context)
+{
+    std::lock_guard<std::mutex> lock(this->arm_command_mutex);
+    if (this->arm_command_size <= 0)
+    {
+        return;
+    }
+    if (data.size() < static_cast<size_t>(this->arm_command_size))
+    {
+        std::cout << LOGGER::WARNING
+                  << "Ignore " << context << ": expect " << this->arm_command_size
+                  << " values, got " << data.size() << std::endl;
+        return;
+    }
+
+    std::vector<float> target(static_cast<size_t>(this->arm_command_size), 0.0f);
+    const size_t count = static_cast<size_t>(this->arm_command_size);
+    for (size_t i = 0; i < count; ++i)
+    {
+        target[i] = data[i];
+    }
+    if (!this->ClipArmPoseTargetInPlace(target, this->arm_hold_position, context))
+    {
+        return;
+    }
+
+    if (this->arm_joint_command_latest.size() != static_cast<size_t>(this->arm_command_size))
+    {
+        this->arm_joint_command_latest.assign(static_cast<size_t>(this->arm_command_size), 0.0f);
+    }
+    if (this->arm_topic_command_latest.size() != static_cast<size_t>(this->arm_command_size))
+    {
+        this->arm_topic_command_latest.assign(static_cast<size_t>(this->arm_command_size), 0.0f);
+    }
+
+    for (size_t i = 0; i < count; ++i)
+    {
+        this->arm_joint_command_latest[i] = target[i];
+        this->arm_topic_command_latest[i] = target[i];
+    }
+    this->arm_topic_command_received = true;
+}
+
+void RL_Real_Go2X5::HandleArmBridgeStateData(
+    const std::vector<float>& data,
+    const bool state_from_backend,
+    const char* context)
+{
+    if (this->arm_joint_count <= 0)
+    {
+        return;
+    }
+
+    const size_t n = static_cast<size_t>(this->arm_joint_count);
+    std::vector<float> q(n, 0.0f);
+    std::vector<float> dq(n, 0.0f);
+    std::vector<float> tau(n, 0.0f);
+
+    if (data.size() >= 3 * n)
+    {
+        std::copy_n(data.begin(), n, q.begin());
+        std::copy_n(data.begin() + n, n, dq.begin());
+        std::copy_n(data.begin() + 2 * n, n, tau.begin());
+    }
+    else if (data.size() >= n)
+    {
+        std::copy_n(data.begin(), n, q.begin());
+    }
+    else
+    {
+        return;
+    }
+
+    if (!this->ValidateArmBridgeStateSample(q, dq, tau, context))
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(this->arm_external_state_mutex);
+    this->arm_external_state_q = std::move(q);
+    this->arm_external_state_dq = std::move(dq);
+    this->arm_external_state_tau = std::move(tau);
+    this->arm_bridge_state_valid = true;
+    this->arm_bridge_state_from_backend = state_from_backend;
+    this->arm_bridge_state_stamp = std::chrono::steady_clock::now();
+    this->arm_bridge_state_timeout_warned = false;
+    if (this->arm_bridge_state_from_backend)
+    {
+        this->arm_bridge_shadow_mode_warned = false;
+        if (!this->arm_bridge_state_stream_logged)
+        {
+            this->arm_bridge_state_stream_logged = true;
+            std::cout << LOGGER::INFO << "Arm bridge state stream detected: transport="
+                      << (this->UseArmBridgeIpc() ? "ipc" : "ros")
+                      << ", dof=" << this->arm_joint_count << std::endl;
+        }
+    }
+    else if (this->arm_bridge_require_live_state && !this->arm_bridge_shadow_mode_warned)
+    {
+        this->arm_bridge_shadow_mode_warned = true;
+        std::cout << LOGGER::WARNING
+                  << "Arm bridge feedback is shadow-only. Real arm feedback is still unavailable."
+                  << std::endl;
+    }
+}
+
 #if !defined(USE_CMAKE) && defined(USE_ROS)
 void RL_Real_Go2X5::CmdvelCallback(
 #if defined(USE_ROS1) && defined(USE_ROS)
@@ -2454,45 +2933,7 @@ void RL_Real_Go2X5::ArmJointCommandCallback(
     {
         return;
     }
-
-    std::lock_guard<std::mutex> lock(this->arm_command_mutex);
-    if (this->arm_command_size <= 0)
-    {
-        return;
-    }
-    if (msg->data.size() < static_cast<size_t>(this->arm_command_size))
-    {
-        std::cout << LOGGER::WARNING
-                  << "Ignore /arm_joint_pos_cmd: expect " << this->arm_command_size
-                  << " values, got " << msg->data.size() << std::endl;
-        return;
-    }
-    std::vector<float> target(static_cast<size_t>(this->arm_command_size), 0.0f);
-    const size_t count = static_cast<size_t>(this->arm_command_size);
-    for (size_t i = 0; i < count; ++i)
-    {
-        target[i] = msg->data[i];
-    }
-    if (!this->ClipArmPoseTargetInPlace(target, this->arm_hold_position, "/arm_joint_pos_cmd"))
-    {
-        return;
-    }
-
-    if (this->arm_joint_command_latest.size() != static_cast<size_t>(this->arm_command_size))
-    {
-        this->arm_joint_command_latest.assign(static_cast<size_t>(this->arm_command_size), 0.0f);
-    }
-    if (this->arm_topic_command_latest.size() != static_cast<size_t>(this->arm_command_size))
-    {
-        this->arm_topic_command_latest.assign(static_cast<size_t>(this->arm_command_size), 0.0f);
-    }
-
-    for (size_t i = 0; i < count; ++i)
-    {
-        this->arm_joint_command_latest[i] = target[i];
-        this->arm_topic_command_latest[i] = target[i];
-    }
-    this->arm_topic_command_received = true;
+    this->HandleArmJointCommandData(msg->data, "/arm_joint_pos_cmd");
 }
 
 void RL_Real_Go2X5::ArmBridgeStateCallback(
@@ -2503,69 +2944,19 @@ void RL_Real_Go2X5::ArmBridgeStateCallback(
 #endif
 )
 {
-    if (!msg || this->arm_joint_count <= 0)
+    if (!msg)
     {
         return;
     }
-
-    const size_t n = static_cast<size_t>(this->arm_joint_count);
-    std::vector<float> q(n, 0.0f);
-    std::vector<float> dq(n, 0.0f);
-    std::vector<float> tau(n, 0.0f);
     bool state_from_backend = false;
-
-    if (msg->data.size() >= 3 * n)
-    {
-        std::copy_n(msg->data.begin(), n, q.begin());
-        std::copy_n(msg->data.begin() + n, n, dq.begin());
-        std::copy_n(msg->data.begin() + 2 * n, n, tau.begin());
-    }
-    else if (msg->data.size() >= n)
-    {
-        std::copy_n(msg->data.begin(), n, q.begin());
-    }
-    else
-    {
-        return;
-    }
-
+    const size_t n = static_cast<size_t>(std::max(0, this->arm_joint_count));
+    std::vector<float> payload = msg->data;
     if (msg->data.size() == (3 * n + 1) || msg->data.size() == (n + 1))
     {
         state_from_backend = msg->data.back() > 0.5f;
+        payload.pop_back();
     }
-
-    if (!this->ValidateArmBridgeStateSample(q, dq, tau, "Arm bridge state"))
-    {
-        return;
-    }
-
-    std::lock_guard<std::mutex> lock(this->arm_external_state_mutex);
-    this->arm_external_state_q = std::move(q);
-    this->arm_external_state_dq = std::move(dq);
-    this->arm_external_state_tau = std::move(tau);
-    this->arm_bridge_state_valid = true;
-    this->arm_bridge_state_from_backend = state_from_backend;
-    this->arm_bridge_state_stamp = std::chrono::steady_clock::now();
-    this->arm_bridge_state_timeout_warned = false;
-    if (this->arm_bridge_state_from_backend)
-    {
-        this->arm_bridge_shadow_mode_warned = false;
-        if (!this->arm_bridge_state_stream_logged)
-        {
-            this->arm_bridge_state_stream_logged = true;
-            std::cout << LOGGER::INFO << "Arm bridge state stream detected: topic="
-                      << this->arm_bridge_state_topic << ", dof=" << this->arm_joint_count
-                      << std::endl;
-        }
-    }
-    else if (this->arm_bridge_require_live_state && !this->arm_bridge_shadow_mode_warned)
-    {
-        this->arm_bridge_shadow_mode_warned = true;
-        std::cout << LOGGER::WARNING
-                  << "Arm bridge state topic is publishing shadow-only feedback. "
-                  << "Real arm feedback is still considered unavailable."
-                  << std::endl;
-    }
+    this->HandleArmBridgeStateData(payload, state_from_backend, "Arm bridge state");
 }
 #endif
 
@@ -2605,22 +2996,41 @@ int main(int argc, char **argv)
         ros::shutdown();
     }
 #elif defined(USE_ROS2) && defined(USE_ROS)
-    std::cout << LOGGER::INFO << "[Boot] rclcpp init begin" << std::endl;
-    rclcpp::init(argc, argv);
-    std::cout << LOGGER::INFO << "[Boot] rclcpp init complete" << std::endl;
     signal(SIGINT, signalHandlerGo2X5);
-    std::cout << LOGGER::INFO << "[Boot] Constructing RL_Real_Go2X5" << std::endl;
-    auto rl_sar = std::make_shared<RL_Real_Go2X5>(argc, argv);
-    std::cout << LOGGER::INFO << "[Boot] RL_Real_Go2X5 constructed" << std::endl;
-    rclcpp::executors::SingleThreadedExecutor executor;
-    executor.add_node(rl_sar->ros2_node);
-    while (rclcpp::ok() && !g_shutdown_requested_go2_x5 && !rl_sar->LoopExceptionRequested())
+    const auto runtime_options = ParseGo2X5RuntimeOptions(argc, argv);
+    if (runtime_options.enable_ros2_runtime)
     {
-        executor.spin_some();
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        const auto ros2_argv = BuildRos2Argv(argc, argv);
+        std::cout << LOGGER::INFO << "[Boot] rclcpp init begin" << std::endl;
+        rclcpp::init(static_cast<int>(ros2_argv.size()), ros2_argv.data());
+        std::cout << LOGGER::INFO << "[Boot] rclcpp init complete" << std::endl;
+        std::cout << LOGGER::INFO << "[Boot] Constructing RL_Real_Go2X5" << std::endl;
+        auto rl_sar = std::make_shared<RL_Real_Go2X5>(argc, argv);
+        std::cout << LOGGER::INFO << "[Boot] RL_Real_Go2X5 constructed" << std::endl;
+        rclcpp::executors::SingleThreadedExecutor executor;
+        if (rl_sar->ros2_node)
+        {
+            executor.add_node(rl_sar->ros2_node);
+        }
+        while (rclcpp::ok() && !g_shutdown_requested_go2_x5 && !rl_sar->LoopExceptionRequested())
+        {
+            executor.spin_some();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        rl_sar->SafeShutdownNow();
+        rclcpp::shutdown();
     }
-    rl_sar->SafeShutdownNow();
-    rclcpp::shutdown();
+    else
+    {
+        std::cout << LOGGER::INFO << "[Boot] ROS2 runtime disabled from CLI; running main control loop without rclcpp"
+                  << std::endl;
+        RL_Real_Go2X5 rl_sar(argc, argv);
+        while (!g_shutdown_requested_go2_x5 && !rl_sar.LoopExceptionRequested())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        rl_sar.SafeShutdownNow();
+    }
 #elif defined(USE_CMAKE) || !defined(USE_ROS)
     signal(SIGINT, signalHandlerGo2X5);
     RL_Real_Go2X5 rl_sar(argc, argv);

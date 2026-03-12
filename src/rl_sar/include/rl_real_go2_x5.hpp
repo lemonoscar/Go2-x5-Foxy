@@ -10,6 +10,7 @@
 #include "inference_runtime.hpp"
 #include "loop.hpp"
 #include "go2_x5_control_logic.hpp"
+#include "go2_x5_ipc_protocol.hpp"
 #include "fsm_go2_x5.hpp"
 
 #include <unitree/robot/channel/channel_publisher.hpp>
@@ -136,15 +137,20 @@ private:
     void InitializeArmCommandState();
     void InitializeArmChannelConfig();
     void InitializeRealDeploySafetyConfig();
+    void InitializeRuntimeOptions(int argc, char **argv);
     Go2X5ControlLogic::ArmRuntimeStateSnapshot CaptureArmRuntimeStateLocked() const;
     void RestoreArmRuntimeStateLocked(const Go2X5ControlLogic::ArmRuntimeStateSnapshot& snapshot);
     void SetupArmCommandSubscriber();
     void SetupArmBridgeInterface();
+    void SetupArmBridgeIpc();
+    void CloseArmBridgeIpc();
+    void PollArmBridgeIpcState();
     void ValidateJointMappingOrThrow(const char* stage) const;
     bool IsArmBridgeStateFreshLocked() const;
     bool IsArmJointIndex(int idx) const;
     bool IsInRLLocomotionState() const;
     bool UseExclusiveRealDeployControl() const;
+    bool UseArmBridgeIpc() const;
     std::vector<float> GetDefaultWholeBodyLowerLimits() const;
     std::vector<float> GetDefaultWholeBodyUpperLimits() const;
     std::vector<float> GetDefaultWholeBodyVelocityLimits() const;
@@ -169,6 +175,10 @@ private:
                                       const std::vector<float>& dq,
                                       const std::vector<float>& tau,
                                       const char* context) const;
+    void HandleArmJointCommandData(const std::vector<float>& data, const char* context);
+    void HandleArmBridgeStateData(const std::vector<float>& data,
+                                  bool state_from_backend,
+                                  const char* context);
     void ReadArmStateFromExternal(RobotState<float> *state);
     void WriteArmCommandToExternal(const RobotCommand<float> *command);
     void ApplyArmHold(const std::vector<float>& target, const char* reason);
@@ -193,6 +203,7 @@ private:
     int arm_command_size = 0;
     bool arm_hold_enabled = true;
     bool arm_runtime_params_ready = false;
+    bool enable_ros2_runtime = true;
     std::string arm_joint_command_topic = "/arm_joint_pos_cmd";
     std::string arm_joint_command_topic_active;
     std::vector<float> arm_joint_command_latest;
@@ -216,6 +227,12 @@ private:
     bool arm_bridge_shadow_mode_warned = false;
     bool arm_bridge_state_from_backend = false;
     float arm_bridge_state_timeout_sec = 0.25f;
+    std::string arm_bridge_transport = "ros";
+    std::string arm_bridge_ipc_host = Go2X5IPC::kDefaultHost;
+    int arm_bridge_cmd_port = Go2X5IPC::kDefaultCommandPort;
+    int arm_bridge_state_port = Go2X5IPC::kDefaultStatePort;
+    int arm_bridge_cmd_socket_fd = -1;
+    int arm_bridge_state_socket_fd = -1;
     std::string arm_bridge_cmd_topic = "/arx_x5/joint_cmd";
     std::string arm_bridge_state_topic = "/arx_x5/joint_state";
     std::vector<float> arm_external_state_q;

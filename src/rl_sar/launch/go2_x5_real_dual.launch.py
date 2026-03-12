@@ -32,6 +32,16 @@ def generate_launch_description():
     arm_enable_background_send_recv = LaunchConfiguration("arm_enable_background_send_recv")
     arm_controller_dt = LaunchConfiguration("arm_controller_dt")
     arm_init_to_home = LaunchConfiguration("arm_init_to_home")
+    arm_ipc_enabled = LaunchConfiguration("arm_ipc_enabled")
+    arm_ipc_bind_host = LaunchConfiguration("arm_ipc_bind_host")
+    arm_ipc_cmd_port = LaunchConfiguration("arm_ipc_cmd_port")
+    arm_ipc_state_host = LaunchConfiguration("arm_ipc_state_host")
+    arm_ipc_state_port = LaunchConfiguration("arm_ipc_state_port")
+    go2_enable_ros2_runtime = LaunchConfiguration("go2_enable_ros2_runtime")
+    go2_arm_bridge_transport = LaunchConfiguration("go2_arm_bridge_transport")
+    go2_arm_bridge_ipc_host = LaunchConfiguration("go2_arm_bridge_ipc_host")
+    go2_arm_bridge_cmd_port = LaunchConfiguration("go2_arm_bridge_cmd_port")
+    go2_arm_bridge_state_port = LaunchConfiguration("go2_arm_bridge_state_port")
     bridge_rmw_implementation = LaunchConfiguration("bridge_rmw_implementation")
     go2_rmw_implementation = LaunchConfiguration("go2_rmw_implementation")
 
@@ -66,6 +76,11 @@ def generate_launch_description():
                 "enable_background_send_recv": arm_enable_background_send_recv,
                 "controller_dt": arm_controller_dt,
                 "init_to_home": arm_init_to_home,
+                "ipc_enabled": arm_ipc_enabled,
+                "ipc_bind_host": arm_ipc_bind_host,
+                "ipc_cmd_port": arm_ipc_cmd_port,
+                "ipc_state_host": arm_ipc_state_host,
+                "ipc_state_port": arm_ipc_state_port,
             }
         ],
     )
@@ -76,7 +91,19 @@ def generate_launch_description():
         name="rl_real_go2_x5",
         output="screen",
         additional_env={"RMW_IMPLEMENTATION": go2_rmw_implementation},
-        arguments=[network_interface],
+        arguments=[
+            network_interface,
+            "--enable-ros2-runtime",
+            go2_enable_ros2_runtime,
+            "--arm-bridge-transport",
+            go2_arm_bridge_transport,
+            "--arm-bridge-ipc-host",
+            go2_arm_bridge_ipc_host,
+            "--arm-bridge-cmd-port",
+            go2_arm_bridge_cmd_port,
+            "--arm-bridge-state-port",
+            go2_arm_bridge_state_port,
+        ],
     )
 
     return LaunchDescription(
@@ -104,6 +131,16 @@ def generate_launch_description():
             DeclareLaunchArgument("arm_enable_background_send_recv", default_value="false"),
             DeclareLaunchArgument("arm_controller_dt", default_value="0.002"),
             DeclareLaunchArgument("arm_init_to_home", default_value="false"),
+            DeclareLaunchArgument("arm_ipc_enabled", default_value="true"),
+            DeclareLaunchArgument("arm_ipc_bind_host", default_value="127.0.0.1"),
+            DeclareLaunchArgument("arm_ipc_cmd_port", default_value="45671"),
+            DeclareLaunchArgument("arm_ipc_state_host", default_value="127.0.0.1"),
+            DeclareLaunchArgument("arm_ipc_state_port", default_value="45672"),
+            DeclareLaunchArgument("go2_enable_ros2_runtime", default_value="false"),
+            DeclareLaunchArgument("go2_arm_bridge_transport", default_value="ipc"),
+            DeclareLaunchArgument("go2_arm_bridge_ipc_host", default_value="127.0.0.1"),
+            DeclareLaunchArgument("go2_arm_bridge_cmd_port", default_value="45671"),
+            DeclareLaunchArgument("go2_arm_bridge_state_port", default_value="45672"),
             DeclareLaunchArgument(
                 "bridge_rmw_implementation",
                 default_value="rmw_cyclonedds_cpp",
