@@ -571,6 +571,53 @@ void RL_Real_Go2X5::InitializeRealDeploySafetyConfig()
     this->whole_body_kd_limits = std::move(kd_limits);
 }
 
+Go2X5ControlLogic::ArmRuntimeStateSnapshot RL_Real_Go2X5::CaptureArmRuntimeStateLocked() const
+{
+    Go2X5ControlLogic::ArmRuntimeStateSnapshot snapshot;
+    snapshot.arm_size = this->arm_command_size;
+    snapshot.command_smoothing_counter = this->arm_command_smoothing_counter;
+    snapshot.hold_enabled = this->arm_hold_enabled;
+    snapshot.topic_command_received = this->arm_topic_command_received;
+    snapshot.command_initialized = this->arm_command_initialized;
+    snapshot.hold_position = this->arm_hold_position;
+    snapshot.joint_command_latest = this->arm_joint_command_latest;
+    snapshot.topic_command_latest = this->arm_topic_command_latest;
+    snapshot.command_smoothing_start = this->arm_command_smoothing_start;
+    snapshot.command_smoothing_target = this->arm_command_smoothing_target;
+    snapshot.command_smoothed = this->arm_command_smoothed;
+    return snapshot;
+}
+
+void RL_Real_Go2X5::RestoreArmRuntimeStateLocked(
+    const Go2X5ControlLogic::ArmRuntimeStateSnapshot& snapshot)
+{
+    Go2X5ControlLogic::ArmRuntimeStateSnapshot current;
+    current.arm_size = this->arm_command_size;
+    current.command_smoothing_counter = this->arm_command_smoothing_counter;
+    current.hold_enabled = this->arm_hold_enabled;
+    current.topic_command_received = this->arm_topic_command_received;
+    current.command_initialized = this->arm_command_initialized;
+    current.hold_position = this->arm_hold_position;
+    current.joint_command_latest = this->arm_joint_command_latest;
+    current.topic_command_latest = this->arm_topic_command_latest;
+    current.command_smoothing_start = this->arm_command_smoothing_start;
+    current.command_smoothing_target = this->arm_command_smoothing_target;
+    current.command_smoothed = this->arm_command_smoothed;
+
+    Go2X5ControlLogic::RestoreArmRuntimeStateIfCompatible(current, snapshot);
+
+    this->arm_command_smoothing_counter = current.command_smoothing_counter;
+    this->arm_hold_enabled = current.hold_enabled;
+    this->arm_topic_command_received = current.topic_command_received;
+    this->arm_command_initialized = current.command_initialized;
+    this->arm_hold_position = std::move(current.hold_position);
+    this->arm_joint_command_latest = std::move(current.joint_command_latest);
+    this->arm_topic_command_latest = std::move(current.topic_command_latest);
+    this->arm_command_smoothing_start = std::move(current.command_smoothing_start);
+    this->arm_command_smoothing_target = std::move(current.command_smoothing_target);
+    this->arm_command_smoothed = std::move(current.command_smoothed);
+}
+
 void RL_Real_Go2X5::InitializeArmChannelConfig()
 {
     const int num_dofs = this->params.Get<int>("num_of_dofs");
@@ -1945,10 +1992,19 @@ void RL_Real_Go2X5::RunModel()
     }
     if (!this->arm_runtime_params_ready)
     {
+        Go2X5ControlLogic::ArmRuntimeStateSnapshot previous_arm_state;
+        {
+            std::lock_guard<std::mutex> lock(this->arm_command_mutex);
+            previous_arm_state = this->CaptureArmRuntimeStateLocked();
+        }
         // Re-sync arm settings after policy config (go2_x5/robot_lab/config.yaml) is loaded.
         this->InitializeArmCommandState();
         this->InitializeArmChannelConfig();
         this->InitializeRealDeploySafetyConfig();
+        {
+            std::lock_guard<std::mutex> lock(this->arm_command_mutex);
+            this->RestoreArmRuntimeStateLocked(previous_arm_state);
+        }
         this->ValidateJointMappingOrThrow("go2_x5/robot_lab/config.yaml");
         this->SetupArmCommandSubscriber();
         this->SetupArmBridgeInterface();

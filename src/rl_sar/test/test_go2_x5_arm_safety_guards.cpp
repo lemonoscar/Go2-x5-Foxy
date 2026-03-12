@@ -61,6 +61,8 @@ int main()
     RequireContains(real_content, "HandleLoopException", real_file);
     RequireContains(real_content, "Ignore /cmd_vel in exclusive real deploy control mode", real_file);
     RequireContains(real_content, "arm_bridge_state_from_backend", real_file);
+    RequireContains(real_content, "CaptureArmRuntimeStateLocked", real_file);
+    RequireContains(real_content, "RestoreArmRuntimeStateLocked", real_file);
     RequireContains(sdk_content, "real_deploy_exclusive_keyboard_control", sdk_file);
     RequireContains(sdk_content, "Key[1] pressed: RL policy mode ON (exclusive real deploy control)", sdk_file);
     RequireContains(sdk_content, "this->control.navigation_mode = false;", sdk_file);
@@ -71,6 +73,11 @@ int main()
     RequireContains(base_content, "joint_lower_limits", base_file);
     RequireContains(base_content, "joint_upper_limits", base_file);
     RequireContains(base_content, "joint_velocity_limits", base_file);
+    RequireContains(base_content, "arm_command_size: 6", base_file);
+    RequireContains(base_content, "arm_joint_command_topic: \"/arm_joint_pos_cmd\"", base_file);
+    RequireContains(base_content, "key2_prefer_topic_command: true", base_file);
+    RequireContains(base_content, "arm_hold_pose:", base_file);
+    RequireContains(base_content, "arm_key_pose:", base_file);
     RequireContains(base_content, "policy_inference_log_enabled: true", base_file);
     RequireNotContains(base_content, "real_deploy_exclusive_keyboard_control: true", base_file);
     RequireContains(base_content, "arm_bridge_require_live_state: true", base_file);

@@ -26,6 +26,21 @@ struct ArmPoseSelection
     ArmPoseSource source = ArmPoseSource::None;
 };
 
+struct ArmRuntimeStateSnapshot
+{
+    int arm_size = 0;
+    int command_smoothing_counter = 0;
+    bool hold_enabled = true;
+    bool topic_command_received = false;
+    bool command_initialized = false;
+    std::vector<float> hold_position;
+    std::vector<float> joint_command_latest;
+    std::vector<float> topic_command_latest;
+    std::vector<float> command_smoothing_start;
+    std::vector<float> command_smoothing_target;
+    std::vector<float> command_smoothed;
+};
+
 inline Key1Mode ResolveKey1Mode(bool prefer_navigation_mode)
 {
     return prefer_navigation_mode ? Key1Mode::Navigation : Key1Mode::FixedCommand;
@@ -34,6 +49,11 @@ inline Key1Mode ResolveKey1Mode(bool prefer_navigation_mode)
 inline bool HasEnoughPose(const std::vector<float>& pose, int arm_size)
 {
     return arm_size > 0 && pose.size() >= static_cast<size_t>(arm_size);
+}
+
+inline bool HasExactPose(const std::vector<float>& pose, int arm_size)
+{
+    return arm_size > 0 && pose.size() == static_cast<size_t>(arm_size);
 }
 
 inline std::vector<float> TrimPose(const std::vector<float>& pose, int arm_size)
@@ -81,6 +101,55 @@ inline ArmPoseSelection SelectKey2ArmPose(
     }
 
     return selection;
+}
+
+inline void RestoreArmRuntimeStateIfCompatible(
+    ArmRuntimeStateSnapshot& current,
+    const ArmRuntimeStateSnapshot& previous)
+{
+    if (current.arm_size <= 0 || previous.arm_size != current.arm_size)
+    {
+        return;
+    }
+
+    current.hold_enabled = previous.hold_enabled;
+
+    if (HasExactPose(previous.hold_position, current.arm_size))
+    {
+        current.hold_position = previous.hold_position;
+    }
+
+    if (HasExactPose(previous.joint_command_latest, current.arm_size))
+    {
+        current.joint_command_latest = previous.joint_command_latest;
+    }
+    else
+    {
+        current.joint_command_latest = current.hold_position;
+    }
+
+    if (HasExactPose(previous.topic_command_latest, current.arm_size))
+    {
+        current.topic_command_latest = previous.topic_command_latest;
+        current.topic_command_received = previous.topic_command_received;
+    }
+    else
+    {
+        current.topic_command_latest = current.hold_position;
+        current.topic_command_received = false;
+    }
+
+    if (previous.command_initialized &&
+        HasExactPose(previous.command_smoothing_start, current.arm_size) &&
+        HasExactPose(previous.command_smoothing_target, current.arm_size) &&
+        HasExactPose(previous.command_smoothed, current.arm_size))
+    {
+        current.command_smoothing_counter = previous.command_smoothing_counter;
+        current.command_smoothing_start = previous.command_smoothing_start;
+        current.command_smoothing_target = previous.command_smoothing_target;
+        current.command_smoothed = previous.command_smoothed;
+        current.command_initialized = true;
+    }
 }
 
 } // namespace Go2X5ControlLogic

@@ -9,6 +9,7 @@
 #include "observation_buffer.hpp"
 #include "inference_runtime.hpp"
 #include "loop.hpp"
+#include "go2_x5_control_logic.hpp"
 #include "fsm_go2_x5.hpp"
 
 #include <unitree/robot/channel/channel_publisher.hpp>
@@ -135,6 +136,8 @@ private:
     void InitializeArmCommandState();
     void InitializeArmChannelConfig();
     void InitializeRealDeploySafetyConfig();
+    Go2X5ControlLogic::ArmRuntimeStateSnapshot CaptureArmRuntimeStateLocked() const;
+    void RestoreArmRuntimeStateLocked(const Go2X5ControlLogic::ArmRuntimeStateSnapshot& snapshot);
     void SetupArmCommandSubscriber();
     void SetupArmBridgeInterface();
     void ValidateJointMappingOrThrow(const char* stage) const;
