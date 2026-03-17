@@ -256,6 +256,8 @@ private:
     bool policy_inference_log_enabled = true;
     float last_policy_inference_hz = 0.0f;
     std::chrono::steady_clock::time_point last_policy_inference_stamp{};
+    mutable std::chrono::steady_clock::time_point whole_body_clip_warn_stamp{};
+    std::chrono::steady_clock::time_point arm_bridge_ipc_send_warn_stamp{};
     std::atomic<bool> loop_exception_requested{false};
     std::mutex safe_shutdown_mutex;
     std::mutex loop_exception_mutex;

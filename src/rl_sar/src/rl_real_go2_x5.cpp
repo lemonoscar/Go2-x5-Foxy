@@ -1170,8 +1170,16 @@ bool RL_Real_Go2X5::ClipWholeBodyCommand(RobotCommand<float> *command, const cha
 
     if (clipped_count > 0)
     {
-        std::cout << LOGGER::WARNING << context << " clipped " << clipped_count
-                  << " joint command(s), first=" << first_joint << std::endl;
+        const auto now = std::chrono::steady_clock::now();
+        const bool should_log =
+            this->whole_body_clip_warn_stamp.time_since_epoch().count() == 0 ||
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - this->whole_body_clip_warn_stamp).count() >= 1000;
+        if (should_log)
+        {
+            this->whole_body_clip_warn_stamp = now;
+            std::cout << LOGGER::WARNING << context << " clipped " << clipped_count
+                      << " joint command(s), first=" << first_joint << std::endl;
+        }
         return true;
     }
     return false;
@@ -2015,8 +2023,16 @@ void RL_Real_Go2X5::WriteArmCommandToExternal(const RobotCommand<float> *command
                 0);
             if (sent < 0)
             {
-                std::cout << LOGGER::WARNING << "Arm bridge IPC send failed: "
-                          << std::strerror(errno) << std::endl;
+                const auto now = std::chrono::steady_clock::now();
+                const bool should_log =
+                    this->arm_bridge_ipc_send_warn_stamp.time_since_epoch().count() == 0 ||
+                    std::chrono::duration_cast<std::chrono::milliseconds>(now - this->arm_bridge_ipc_send_warn_stamp).count() >= 1000;
+                if (should_log)
+                {
+                    this->arm_bridge_ipc_send_warn_stamp = now;
+                    std::cout << LOGGER::WARNING << "Arm bridge IPC send failed: "
+                              << std::strerror(errno) << std::endl;
+                }
             }
         }
 #endif

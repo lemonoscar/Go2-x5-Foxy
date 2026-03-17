@@ -813,6 +813,8 @@ class ArxX5BridgeNode(Node):
             message = str(payload.get("error", "")).strip()
             if not message:
                 message = str(payload)
+            if summary and summary not in message:
+                message = f"{message} [{summary}]"
         else:
             message = summary
         if not message:
