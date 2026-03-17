@@ -141,6 +141,9 @@ private:
     Go2X5ControlLogic::ArmRuntimeStateSnapshot CaptureArmRuntimeStateLocked() const;
     void RestoreArmRuntimeStateLocked(const Go2X5ControlLogic::ArmRuntimeStateSnapshot& snapshot);
     void SetupArmCommandSubscriber();
+    void SetupArmCommandIpc();
+    void CloseArmCommandIpc();
+    void PollArmCommandIpc();
     void SetupArmBridgeInterface();
     void SetupArmBridgeIpc();
     void CloseArmBridgeIpc();
@@ -206,6 +209,8 @@ private:
     bool enable_ros2_runtime = true;
     std::string arm_joint_command_topic = "/arm_joint_pos_cmd";
     std::string arm_joint_command_topic_active;
+    int arm_joint_command_port = Go2X5IPC::kDefaultJointCommandPort;
+    int arm_joint_command_socket_fd = -1;
     std::vector<float> arm_joint_command_latest;
     std::vector<float> arm_topic_command_latest;
     bool arm_topic_command_received = false;

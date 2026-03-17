@@ -17,6 +17,7 @@ def generate_launch_description():
     arm_joint_count = LaunchConfiguration("arm_joint_count")
     arm_cmd_topic = LaunchConfiguration("arm_cmd_topic")
     arm_state_topic = LaunchConfiguration("arm_state_topic")
+    arm_joint_command_topic = LaunchConfiguration("arm_joint_command_topic")
     arm_publish_rate_hz = LaunchConfiguration("arm_publish_rate_hz")
     arm_command_speed = LaunchConfiguration("arm_command_speed")
     arm_cmd_timeout_sec = LaunchConfiguration("arm_cmd_timeout_sec")
@@ -37,6 +38,9 @@ def generate_launch_description():
     arm_ipc_cmd_port = LaunchConfiguration("arm_ipc_cmd_port")
     arm_ipc_state_host = LaunchConfiguration("arm_ipc_state_host")
     arm_ipc_state_port = LaunchConfiguration("arm_ipc_state_port")
+    arm_topic_ipc_enabled = LaunchConfiguration("arm_topic_ipc_enabled")
+    arm_topic_ipc_host = LaunchConfiguration("arm_topic_ipc_host")
+    arm_topic_ipc_port = LaunchConfiguration("arm_topic_ipc_port")
     go2_enable_ros2_runtime = LaunchConfiguration("go2_enable_ros2_runtime")
     go2_arm_bridge_transport = LaunchConfiguration("go2_arm_bridge_transport")
     go2_arm_bridge_ipc_host = LaunchConfiguration("go2_arm_bridge_ipc_host")
@@ -61,6 +65,7 @@ def generate_launch_description():
                 "joint_count": arm_joint_count,
                 "cmd_topic": arm_cmd_topic,
                 "state_topic": arm_state_topic,
+                "arm_joint_command_topic": arm_joint_command_topic,
                 "publish_rate_hz": arm_publish_rate_hz,
                 "command_speed": arm_command_speed,
                 "cmd_timeout_sec": arm_cmd_timeout_sec,
@@ -81,6 +86,9 @@ def generate_launch_description():
                 "ipc_cmd_port": arm_ipc_cmd_port,
                 "ipc_state_host": arm_ipc_state_host,
                 "ipc_state_port": arm_ipc_state_port,
+                "arm_topic_ipc_enabled": arm_topic_ipc_enabled,
+                "arm_topic_ipc_host": arm_topic_ipc_host,
+                "arm_topic_ipc_port": arm_topic_ipc_port,
             }
         ],
     )
@@ -103,6 +111,8 @@ def generate_launch_description():
             go2_arm_bridge_cmd_port,
             "--arm-bridge-state-port",
             go2_arm_bridge_state_port,
+            "--arm-joint-cmd-port",
+            arm_topic_ipc_port,
         ],
     )
 
@@ -116,10 +126,11 @@ def generate_launch_description():
             DeclareLaunchArgument("arm_joint_count", default_value="6"),
             DeclareLaunchArgument("arm_cmd_topic", default_value="/arx_x5/joint_cmd"),
             DeclareLaunchArgument("arm_state_topic", default_value="/arx_x5/joint_state"),
+            DeclareLaunchArgument("arm_joint_command_topic", default_value="/arm_joint_pos_cmd"),
             DeclareLaunchArgument("arm_publish_rate_hz", default_value="200.0"),
             DeclareLaunchArgument("arm_command_speed", default_value="0.4"),
             DeclareLaunchArgument("arm_cmd_timeout_sec", default_value="0.5"),
-            DeclareLaunchArgument("arm_accept_commands", default_value="false"),
+            DeclareLaunchArgument("arm_accept_commands", default_value="true"),
             DeclareLaunchArgument("arm_dry_run", default_value="false"),
             DeclareLaunchArgument("arm_sdk_root", default_value=EnvironmentVariable("ARX5_SDK_ROOT", default_value="")),
             DeclareLaunchArgument("arm_sdk_python_path", default_value=EnvironmentVariable("ARX5_SDK_PYTHON_PATH", default_value="")),
@@ -136,6 +147,9 @@ def generate_launch_description():
             DeclareLaunchArgument("arm_ipc_cmd_port", default_value="45671"),
             DeclareLaunchArgument("arm_ipc_state_host", default_value="127.0.0.1"),
             DeclareLaunchArgument("arm_ipc_state_port", default_value="45672"),
+            DeclareLaunchArgument("arm_topic_ipc_enabled", default_value="true"),
+            DeclareLaunchArgument("arm_topic_ipc_host", default_value="127.0.0.1"),
+            DeclareLaunchArgument("arm_topic_ipc_port", default_value="45673"),
             DeclareLaunchArgument("go2_enable_ros2_runtime", default_value="false"),
             DeclareLaunchArgument("go2_arm_bridge_transport", default_value="ipc"),
             DeclareLaunchArgument("go2_arm_bridge_ipc_host", default_value="127.0.0.1"),

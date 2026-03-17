@@ -1,5 +1,50 @@
 # rl_sar Change Log
 
+## 2026-03-17
+
+### go2_x5 关闭主控 ROS2 Runtime 后补齐 arm 目标入口
+
+#### 背景
+- `go2_x5_real_dual.launch.py` 默认已经切到：
+  - `go2_enable_ros2_runtime:=false`
+  - `go2_arm_bridge_transport:=ipc`
+- 这样虽然绕开了 `Unitree SDK2 + ROS2 DDS` 的冲突，但 `rl_real_go2_x5` 也会失去对 `/arm_joint_pos_cmd` 的直接订阅能力。
+- 结果是：
+  - 用户发了 `/arm_joint_pos_cmd`
+  - `arx_x5_bridge.py` 能正常运行
+  - 但主控并不会收到最新 arm topic target
+
+#### 改动
+- `go2_x5` IPC 协议新增 arm pose 包：
+  - `/arm_joint_pos_cmd` relay：`arx_x5_bridge.py -> rl_real_go2_x5`
+- `arx_x5_bridge.py` 新增本地 relay 能力：
+  - 订阅 `/arm_joint_pos_cmd`
+  - 在 `go2_enable_ros2_runtime:=false` 的双进程部署中，通过 localhost UDP 转发给 `rl_real_go2_x5`
+- `rl_real_go2_x5` 新增本地 arm topic IPC 接收口：
+  - `--arm-joint-cmd-port`
+- `go2_x5_real_dual.launch.py` 默认改为：
+  - `arm_accept_commands:=true`
+  - `arm_topic_ipc_enabled:=true`
+
+#### 结果
+- 双进程默认部署下：
+  - 主控不创建 `rclcpp::Node`
+  - 主控仍然可以收到 `/arm_joint_pos_cmd`
+  - X5 bridge 默认可执行来自主控的真实 arm 命令
+- 如果只想做只读排查，显式设置：
+  - `arm_accept_commands:=false`
+
+#### 当前默认工作模式
+- `policy/go2_x5/base.yaml` 与 `policy/go2_x5/robot_lab/config.yaml` 已恢复为：
+  - `key2_prefer_topic_command: true`
+- 所以在默认双进程部署下：
+  - 机械臂目标可通过 `/arm_joint_pos_cmd` relay 到主控
+  - 按下 `Key[2]` 时，会优先接管最新机械臂目标；只有没有有效 topic 目标时才回退到 `arm_key_pose` / `arm_hold_pose`
+- `policy/go2_x5/robot_lab/config.yaml` 仍保持：
+  - `key1_prefer_navigation_mode: false`
+  - `fixed_cmd_x/y/yaw`
+- 这对应当前 sim2real 目标：底座进入 RL 后按内部固定速度跑，机械臂按 `Key[2]` 执行用户预设位置
+
 ## 2026-03-12
 
 ### go2_x5 主控去 ROS2 Runtime 化
@@ -32,16 +77,14 @@
 
 #### 验证
 - `python3 -m py_compile src/rl_sar/scripts/arx_x5_bridge.py src/rl_sar/launch/go2_x5_real_dual.launch.py`
-- standalone CMake 构建通过：
-  - `test_go2_x5_ipc_protocol`
+- focused CMake tests 通过：
   - `test_go2_x5_control_logic`
+  - `test_go2_x5_ipc_protocol`
   - `test_go2_x5_arm_bridge_defaults`
   - `test_go2_x5_arm_lock_defaults`
-  - `test_joint_mapping_validation`
-  - `test_loop_exception_handler`
-  - `test_loop_timing_precision`
+  - `test_go2_x5_arm_safety_guards`
 - 说明：
-  - `test_go2_x5_arm_safety_guards` 在当前工作区失败，原因是本地未提交的 `policy/go2_x5/base.yaml` 已被改成 `key2_prefer_topic_command: false`，与该测试假设的仓库默认值不一致，不是本轮 IPC 改动引入的新失败。
+  - `test_go2_x5_arm_safety_guards` 重新通过，当前默认配置已经与目标 sim2real 工作模式一致。
 
 ## 2026-03-06
 

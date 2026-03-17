@@ -14,6 +14,7 @@ namespace Go2X5IPC
 constexpr uint16_t kProtocolVersion = 1;
 constexpr int kDefaultCommandPort = 45671;
 constexpr int kDefaultStatePort = 45672;
+constexpr int kDefaultJointCommandPort = 45673;
 constexpr const char* kDefaultHost = "127.0.0.1";
 
 inline std::string NormalizeTransport(std::string transport)
@@ -51,6 +52,12 @@ struct ArmStatePacket
     std::vector<float> tau;
 };
 
+struct ArmPosePacket
+{
+    uint16_t joint_count = 0;
+    std::vector<float> q;
+};
+
 inline size_t CommandPacketSize(const size_t joint_count)
 {
     return 8 + joint_count * sizeof(float) * 5;
@@ -59,6 +66,11 @@ inline size_t CommandPacketSize(const size_t joint_count)
 inline size_t StatePacketSize(const size_t joint_count)
 {
     return 12 + joint_count * sizeof(float) * 3;
+}
+
+inline size_t PosePacketSize(const size_t joint_count)
+{
+    return 8 + joint_count * sizeof(float);
 }
 
 template <typename T>
@@ -140,6 +152,26 @@ inline std::vector<uint8_t> SerializeStatePacket(
     append_vector(q);
     append_vector(dq);
     append_vector(tau);
+    return bytes;
+}
+
+inline std::vector<uint8_t> SerializePosePacket(
+    const uint16_t joint_count,
+    const std::vector<float>& q)
+{
+    std::vector<uint8_t> bytes;
+    bytes.reserve(PosePacketSize(joint_count));
+    bytes.push_back('G');
+    bytes.push_back('X');
+    bytes.push_back('5');
+    bytes.push_back('P');
+    AppendScalar(bytes, kProtocolVersion);
+    AppendScalar(bytes, joint_count);
+    for (uint16_t i = 0; i < joint_count; ++i)
+    {
+        const float value = i < q.size() ? q[static_cast<size_t>(i)] : 0.0f;
+        AppendScalar(bytes, value);
+    }
     return bytes;
 }
 
@@ -260,6 +292,56 @@ inline bool ParseStatePacket(
     {
         if (error) *error = "failed to read state packet payload";
         return false;
+    }
+    packet = std::move(local);
+    return true;
+}
+
+inline bool ParsePosePacket(
+    const std::vector<uint8_t>& bytes,
+    ArmPosePacket& packet,
+    std::string* error = nullptr)
+{
+    if (bytes.size() < PosePacketSize(0))
+    {
+        if (error) *error = "packet too short";
+        return false;
+    }
+    if (!(bytes[0] == 'G' && bytes[1] == 'X' && bytes[2] == '5' && bytes[3] == 'P'))
+    {
+        if (error) *error = "invalid pose packet magic";
+        return false;
+    }
+
+    size_t offset = 4;
+    uint16_t version = 0;
+    uint16_t joint_count = 0;
+    if (!ReadScalar(bytes, offset, version) || !ReadScalar(bytes, offset, joint_count))
+    {
+        if (error) *error = "failed to read pose packet header";
+        return false;
+    }
+    if (version != kProtocolVersion)
+    {
+        if (error) *error = "unsupported pose packet version";
+        return false;
+    }
+    if (bytes.size() != PosePacketSize(joint_count))
+    {
+        if (error) *error = "unexpected pose packet size";
+        return false;
+    }
+
+    ArmPosePacket local;
+    local.joint_count = joint_count;
+    local.q.assign(static_cast<size_t>(joint_count), 0.0f);
+    for (uint16_t i = 0; i < joint_count; ++i)
+    {
+        if (!ReadScalar(bytes, offset, local.q[static_cast<size_t>(i)]))
+        {
+            if (error) *error = "failed to read pose packet payload";
+            return false;
+        }
     }
     packet = std::move(local);
     return true;

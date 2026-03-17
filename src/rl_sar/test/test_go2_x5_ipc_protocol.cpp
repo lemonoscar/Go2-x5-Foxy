@@ -66,6 +66,29 @@ int main()
     }
 
     {
+        const std::vector<float> q = {0.6f, 1.2f, 1.8f, 2.4f};
+        const auto bytes = SerializePosePacket(4, q);
+        if (bytes.size() != PosePacketSize(4))
+        {
+            std::cerr << "Unexpected serialized pose packet size\n";
+            return 1;
+        }
+
+        ArmPosePacket packet;
+        std::string error;
+        if (!ParsePosePacket(bytes, packet, &error))
+        {
+            std::cerr << "Failed to parse pose packet: " << error << "\n";
+            return 1;
+        }
+        if (packet.joint_count != 4 || packet.q != q)
+        {
+            std::cerr << "Pose packet roundtrip mismatch\n";
+            return 1;
+        }
+    }
+
+    {
         std::vector<uint8_t> invalid = {0, 1, 2, 3, 4};
         ArmCommandPacket packet;
         if (ParseCommandPacket(invalid, packet))
@@ -83,6 +106,18 @@ int main()
         if (ParseStatePacket(invalid, packet))
         {
             std::cerr << "Expected invalid state packet magic to be rejected\n";
+            return 1;
+        }
+    }
+
+    {
+        const auto bytes = SerializePosePacket(1, {1.0f});
+        std::vector<uint8_t> invalid = bytes;
+        invalid[3] = 'X';
+        ArmPosePacket packet;
+        if (ParsePosePacket(invalid, packet))
+        {
+            std::cerr << "Expected invalid pose packet magic to be rejected\n";
             return 1;
         }
     }

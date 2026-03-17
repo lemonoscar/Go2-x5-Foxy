@@ -84,6 +84,11 @@ int main()
     RequireContains(config_content, "arm_bridge_require_live_state: true", config_file);
     RequireContains(config_content, "real_deploy_exclusive_keyboard_control: true", config_file);
     RequireContains(config_content, "policy_inference_log_enabled: true", config_file);
+    RequireContains(config_content, "fixed_cmd_x: 0.5", config_file);
+    RequireContains(config_content, "fixed_cmd_y: 0.0", config_file);
+    RequireContains(config_content, "fixed_cmd_yaw: 0.0", config_file);
+    RequireContains(config_content, "key1_prefer_navigation_mode: false", config_file);
+    RequireContains(config_content, "key2_prefer_topic_command: true", config_file);
 
     std::cout << "go2_x5 real deploy safety guards test passed." << std::endl;
     return 0;

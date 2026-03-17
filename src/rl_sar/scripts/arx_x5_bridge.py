@@ -148,8 +148,10 @@ def _summarize_process_output(stdout_text: str, stderr_text: str) -> str:
 _IPC_PROTOCOL_VERSION = 1
 _IPC_CMD_MAGIC = b"GX5C"
 _IPC_STATE_MAGIC = b"GX5S"
+_IPC_POSE_MAGIC = b"GX5P"
 _IPC_CMD_HEADER = struct.Struct("<4sHH")
 _IPC_STATE_HEADER = struct.Struct("<4sHHI")
+_IPC_POSE_HEADER = struct.Struct("<4sHH")
 
 
 def _serialize_state_packet(
@@ -164,6 +166,13 @@ def _serialize_state_packet(
     for values in (q, dq, tau):
         for i in range(joint_count):
             payload.extend(struct.pack("<f", float(values[i]) if i < len(values) else 0.0))
+    return bytes(payload)
+
+
+def _serialize_pose_packet(joint_count: int, q: Sequence[float]) -> bytes:
+    payload = bytearray(_IPC_POSE_HEADER.pack(_IPC_POSE_MAGIC, _IPC_PROTOCOL_VERSION, joint_count))
+    for i in range(joint_count):
+        payload.extend(struct.pack("<f", float(q[i]) if i < len(q) else 0.0))
     return bytes(payload)
 
 
@@ -506,6 +515,7 @@ class ArxX5BridgeNode(Node):
         self.declare_parameter("joint_count", 6)
         self.declare_parameter("cmd_topic", "/arx_x5/joint_cmd")
         self.declare_parameter("state_topic", "/arx_x5/joint_state")
+        self.declare_parameter("arm_joint_command_topic", "/arm_joint_pos_cmd")
         self.declare_parameter("publish_rate_hz", 200.0)
         self.declare_parameter("command_speed", 0.4)
         self.declare_parameter("cmd_timeout_sec", 0.5)
@@ -532,6 +542,9 @@ class ArxX5BridgeNode(Node):
         self.declare_parameter("ipc_cmd_port", 45671)
         self.declare_parameter("ipc_state_host", "127.0.0.1")
         self.declare_parameter("ipc_state_port", 45672)
+        self.declare_parameter("arm_topic_ipc_enabled", False)
+        self.declare_parameter("arm_topic_ipc_host", "127.0.0.1")
+        self.declare_parameter("arm_topic_ipc_port", 45673)
 
         self.model = str(self.get_parameter("model").value)
         self.interface_name = str(self.get_parameter("interface_name").value)
@@ -539,6 +552,7 @@ class ArxX5BridgeNode(Node):
         self.joint_count = int(self.get_parameter("joint_count").value)
         self.cmd_topic = str(self.get_parameter("cmd_topic").value)
         self.state_topic = str(self.get_parameter("state_topic").value)
+        self.arm_joint_command_topic = str(self.get_parameter("arm_joint_command_topic").value)
         self.publish_rate_hz = float(self.get_parameter("publish_rate_hz").value)
         self.command_speed = float(self.get_parameter("command_speed").value)
         self.cmd_timeout_sec = float(self.get_parameter("cmd_timeout_sec").value)
@@ -566,6 +580,9 @@ class ArxX5BridgeNode(Node):
         self.ipc_cmd_port = int(self.get_parameter("ipc_cmd_port").value)
         self.ipc_state_host = str(self.get_parameter("ipc_state_host").value)
         self.ipc_state_port = int(self.get_parameter("ipc_state_port").value)
+        self.arm_topic_ipc_enabled = bool(self.get_parameter("arm_topic_ipc_enabled").value)
+        self.arm_topic_ipc_host = str(self.get_parameter("arm_topic_ipc_host").value)
+        self.arm_topic_ipc_port = int(self.get_parameter("arm_topic_ipc_port").value)
 
         self._prepare_sdk_environment()
 
@@ -582,6 +599,7 @@ class ArxX5BridgeNode(Node):
         self.state_from_backend = False
         self._ipc_cmd_socket: Optional[socket.socket] = None
         self._ipc_state_socket: Optional[socket.socket] = None
+        self._arm_topic_ipc_socket: Optional[socket.socket] = None
 
         self.backend = None
         if self.dry_run:
@@ -638,9 +656,19 @@ class ArxX5BridgeNode(Node):
 
         if self.ipc_enabled:
             self._setup_ipc()
+        if self.arm_topic_ipc_enabled:
+            self._setup_arm_topic_ipc()
 
         self.sub_cmd = self.create_subscription(Float32MultiArray, self.cmd_topic, self._on_cmd, 10)
         self.pub_state = self.create_publisher(Float32MultiArray, self.state_topic, 10)
+        self.sub_arm_joint_command = None
+        if self.arm_topic_ipc_enabled and self.arm_joint_command_topic:
+            self.sub_arm_joint_command = self.create_subscription(
+                Float32MultiArray,
+                self.arm_joint_command_topic,
+                self._on_arm_joint_command,
+                10,
+            )
 
         hz = self.publish_rate_hz if self.publish_rate_hz > 1e-6 else 200.0
         period = 1.0 / hz
@@ -649,7 +677,8 @@ class ArxX5BridgeNode(Node):
         self.get_logger().info(
             f"ARX bridge started: model={self.model}, iface={self.interface_name}, "
             f"cmd_topic={self.cmd_topic}, state_topic={self.state_topic}, N={self.joint_count}, "
-            f"accept_commands={self.accept_commands}, ipc_enabled={self.ipc_enabled}"
+            f"accept_commands={self.accept_commands}, ipc_enabled={self.ipc_enabled}, "
+            f"arm_topic_ipc_enabled={self.arm_topic_ipc_enabled}"
         )
         if not self.accept_commands:
             self.get_logger().warning(
@@ -826,6 +855,18 @@ class ArxX5BridgeNode(Node):
             f"state_target={self.ipc_state_host}:{self.ipc_state_port}"
         )
 
+    def _setup_arm_topic_ipc(self) -> None:
+        try:
+            self._arm_topic_ipc_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        except OSError as ex:
+            raise RuntimeError(
+                f"Failed to set up arm topic IPC sender to "
+                f"{self.arm_topic_ipc_host}:{self.arm_topic_ipc_port}: {ex}"
+            ) from ex
+        self.get_logger().info(
+            f"Arm topic IPC ready: target={self.arm_topic_ipc_host}:{self.arm_topic_ipc_port}"
+        )
+
     def _close_ipc(self) -> None:
         if self._ipc_cmd_socket is not None:
             self._ipc_cmd_socket.close()
@@ -833,6 +874,9 @@ class ArxX5BridgeNode(Node):
         if self._ipc_state_socket is not None:
             self._ipc_state_socket.close()
             self._ipc_state_socket = None
+        if self._arm_topic_ipc_socket is not None:
+            self._arm_topic_ipc_socket.close()
+            self._arm_topic_ipc_socket = None
 
     def _apply_command(
         self,
@@ -921,6 +965,24 @@ class ArxX5BridgeNode(Node):
         if len(msg.data) >= 5 * n:
             tau = [float(x) for x in msg.data[4 * n:5 * n]]
         self._apply_command(q, dq, kp, kd, tau, "/arx_x5/joint_cmd")
+
+    def _on_arm_joint_command(self, msg: Float32MultiArray) -> None:
+        if self._arm_topic_ipc_socket is None:
+            return
+        n = self.joint_count
+        if len(msg.data) < n:
+            self._warn_invalid_command(
+                f"Ignore {self.arm_joint_command_topic}: expect {n} values, got {len(msg.data)}."
+            )
+            return
+        payload = _serialize_pose_packet(n, msg.data[:n])
+        try:
+            self._arm_topic_ipc_socket.sendto(
+                payload,
+                (self.arm_topic_ipc_host, self.arm_topic_ipc_port),
+            )
+        except OSError as ex:
+            self.get_logger().warning(f"Arm topic IPC send failed: {ex}")
 
     def _publish_state(self) -> None:
         msg = Float32MultiArray()

@@ -41,6 +41,7 @@ int main()
 
     RequireContains(launch_content, "on_exit=Shutdown(reason=\"arx_x5_bridge exited\")", launch_file);
     RequireContains(launch_content, "DeclareLaunchArgument(\"arm_require_sdk\", default_value=\"true\")", launch_file);
+    RequireContains(launch_content, "DeclareLaunchArgument(\"arm_joint_command_topic\", default_value=\"/arm_joint_pos_cmd\")", launch_file);
     RequireContains(
         launch_content,
         "DeclareLaunchArgument(\"arm_require_initial_state\", default_value=\"true\")",
@@ -55,14 +56,29 @@ int main()
         launch_file);
     RequireContains(
         launch_content,
-        "DeclareLaunchArgument(\"arm_accept_commands\", default_value=\"false\")",
+        "DeclareLaunchArgument(\"arm_accept_commands\", default_value=\"true\")",
+        launch_file);
+    RequireContains(
+        launch_content,
+        "DeclareLaunchArgument(\"arm_topic_ipc_enabled\", default_value=\"true\")",
+        launch_file);
+    RequireContains(
+        launch_content,
+        "DeclareLaunchArgument(\"arm_topic_ipc_port\", default_value=\"45673\")",
+        launch_file);
+    RequireContains(
+        launch_content,
+        "\"--arm-joint-cmd-port\"",
         launch_file);
 
+    RequireContains(bridge_content, "self.declare_parameter(\"arm_joint_command_topic\", \"/arm_joint_pos_cmd\")", bridge_file);
     RequireContains(bridge_content, "self.declare_parameter(\"require_sdk\", False)", bridge_file);
     RequireContains(bridge_content, "self.declare_parameter(\"require_initial_state\", False)", bridge_file);
     RequireContains(bridge_content, "self.declare_parameter(\"probe_backend_before_init\", True)", bridge_file);
     RequireContains(bridge_content, "self.declare_parameter(\"probe_timeout_sec\", 5.0)", bridge_file);
     RequireContains(bridge_content, "self.declare_parameter(\"accept_commands\", False)", bridge_file);
+    RequireContains(bridge_content, "self.declare_parameter(\"arm_topic_ipc_enabled\", False)", bridge_file);
+    RequireContains(bridge_content, "self.declare_parameter(\"arm_topic_ipc_port\", 45673)", bridge_file);
     RequireContains(bridge_content, "self.state_from_backend = False", bridge_file);
     RequireContains(bridge_content, "msg.data = list(self.last_q) + list(self.last_dq) + list(self.last_tau) + [", bridge_file);
 

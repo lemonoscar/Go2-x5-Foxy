@@ -115,6 +115,12 @@ The default dual-process launch now falls back to `shadow-only mode` when the ar
 1. Run a software smoke test with `arm_dry_run:=true`.
 2. Switch to strict real-arm mode and require both SDK availability and a valid initial state.
 
+Default dual-process launch behavior:
+
+- the launch file now starts the X5 bridge in writable mode (`arm_accept_commands:=true`)
+- when `go2_enable_ros2_runtime:=false`, `/arm_joint_pos_cmd` is relayed to `rl_real_go2_x5` over localhost UDP instead of DDS
+- for a read-only inspection run, override `arm_accept_commands:=false`
+
 ### Software smoke test (no arm hardware required)
 
 ```bash
@@ -147,8 +153,8 @@ ros2 launch rl_sar go2_x5_real_dual.launch.py \
 
 - `0`: Get up
 - `1`: Enter RL locomotion
-  - default in `go2_x5/robot_lab/config.yaml`: enables navigation mode and consumes `/cmd_vel`
-  - set `key1_prefer_navigation_mode: false` to use `fixed_cmd_*` instead
+  - current `go2_x5/robot_lab/config.yaml`: uses `fixed_cmd_*`
+  - set `key1_prefer_navigation_mode: true` to enable `/cmd_vel`
 - `9`: Get down
 - `P`: Passive mode
 - `W/A/S/D/Q/E`: velocity commands
@@ -157,14 +163,14 @@ ros2 launch rl_sar go2_x5_real_dual.launch.py \
 
 Go2-X5 arm shortcuts:
 
-- `2`: hold arm at latest `/arm_joint_pos_cmd` (fallback to `arm_key_pose` then `arm_hold_pose`)
+- `2`: if `key2_prefer_topic_command: true`, hold arm at latest `/arm_joint_pos_cmd`; otherwise use `arm_key_pose` then `arm_hold_pose`
 - `3`: restore default arm pose
 - `4`: arm hold ON/OFF
 
 Default real deployment now uses `arm_hold_enabled: true` and `arm_lock: false`:
 
 - without `2`, the arm stays at `arm_hold_pose`
-- publish `/arm_joint_pos_cmd`, then press `2` to replace the hold target with that 6-DoF arm pose
+- publish `/arm_joint_pos_cmd`, then press `2` to replace the hold target with that 6-DoF arm pose only when `key2_prefer_topic_command: true`
 - if the main process keeps warning `Arm bridge state is missing or stale`, the arm stays in shadow/hold and does not follow live bridge state
 
 ## Go2-X5 Sim2Real Key Flow
@@ -172,8 +178,10 @@ Default real deployment now uses `arm_hold_enabled: true` and `arm_lock: false`:
 Target flow for deployment:
 
 1. Press `0` -> robot gets up.
-2. Press `1` -> enter RL state; by default commands are from `/cmd_vel`.
-3. Wait until the main process prints `Arm bridge state stream detected`, then publish `/arm_joint_pos_cmd` and press `2` -> arm moves/holds at that published target.
+2. Press `1` -> enter RL state; command source depends on `key1_prefer_navigation_mode`.
+3. Wait until the main process prints `Arm bridge state stream detected`, then publish `/arm_joint_pos_cmd` and press `2`.
+   If `key2_prefer_topic_command: true`, the arm moves/holds at that published target.
+   If `key2_prefer_topic_command: false`, Key[2] uses `arm_key_pose` / `arm_hold_pose` instead.
 4. Press `3` -> arm returns to default pose.
 
 ## Minimal Reproducible Sim2Real (Jetson, Go2-X5)
@@ -256,6 +264,7 @@ Troubleshooting:
 - No output from `candump can0`, and `ip -s -d link show can0` stays at `RX=0`: check arm power, CAN wiring, SLCAN speed code, and the USB-CAN adapter first.
 - If the bridge reports `shadow-only mode`, the ROS side is alive but arm SDK/bus handshake did not succeed.
 - `/arm_joint_pos_cmd` now requires a full 6-DoF target in one message; short messages are ignored to avoid half-stale arm targets.
+- If the main process logs `Key[2] ignoring latest /arm_joint_pos_cmd because key2_prefer_topic_command=false`, the topic relay is working but the current policy config is intentionally bypassing topic-driven arm hold.
 
 ## Jetson Notes
 

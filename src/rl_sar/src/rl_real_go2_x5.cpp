@@ -35,6 +35,7 @@ struct Go2X5RuntimeOptions
     std::string arm_bridge_ipc_host = Go2X5IPC::kDefaultHost;
     int arm_bridge_cmd_port = Go2X5IPC::kDefaultCommandPort;
     int arm_bridge_state_port = Go2X5IPC::kDefaultStatePort;
+    int arm_joint_command_port = Go2X5IPC::kDefaultJointCommandPort;
 };
 
 std::string ToLowerCopy(std::string value)
@@ -107,6 +108,11 @@ Go2X5RuntimeOptions ParseGo2X5RuntimeOptions(int argc, char **argv)
             options.arm_bridge_state_port = ParseIntArgValue(argv[++i], options.arm_bridge_state_port);
             continue;
         }
+        if (arg == "--arm-joint-cmd-port" && (i + 1) < argc)
+        {
+            options.arm_joint_command_port = ParseIntArgValue(argv[++i], options.arm_joint_command_port);
+            continue;
+        }
     }
 
     if (!options.arm_bridge_transport_explicit && !options.enable_ros2_runtime)
@@ -130,6 +136,10 @@ Go2X5RuntimeOptions ParseGo2X5RuntimeOptions(int argc, char **argv)
     {
         options.arm_bridge_state_port = Go2X5IPC::kDefaultStatePort;
     }
+    if (options.arm_joint_command_port <= 0)
+    {
+        options.arm_joint_command_port = Go2X5IPC::kDefaultJointCommandPort;
+    }
     return options;
 }
 
@@ -146,7 +156,8 @@ std::vector<char*> BuildRos2Argv(int argc, char **argv)
              arg == "--arm-bridge-transport" ||
              arg == "--arm-bridge-ipc-host" ||
              arg == "--arm-bridge-cmd-port" ||
-             arg == "--arm-bridge-state-port");
+             arg == "--arm-bridge-state-port" ||
+             arg == "--arm-joint-cmd-port");
         if (arg == "--disable-ros2-runtime")
         {
             continue;
@@ -375,6 +386,7 @@ void RL_Real_Go2X5::SafeShutdownNow()
         std::cout << LOGGER::WARNING << "Safe shutdown sequence failed with unknown error." << std::endl;
     }
     this->arm_safe_shutdown_active.store(false);
+    this->CloseArmCommandIpc();
     this->CloseArmBridgeIpc();
     this->safe_shutdown_done = true;
 }
@@ -387,12 +399,14 @@ void RL_Real_Go2X5::InitializeRuntimeOptions(int argc, char **argv)
     this->arm_bridge_ipc_host = options.arm_bridge_ipc_host;
     this->arm_bridge_cmd_port = options.arm_bridge_cmd_port;
     this->arm_bridge_state_port = options.arm_bridge_state_port;
+    this->arm_joint_command_port = options.arm_joint_command_port;
     std::cout << LOGGER::INFO
               << "[Boot] Runtime options: ros2_runtime=" << (this->enable_ros2_runtime ? "true" : "false")
               << ", arm_bridge_transport=" << this->arm_bridge_transport
               << ", ipc_host=" << this->arm_bridge_ipc_host
               << ", cmd_port=" << this->arm_bridge_cmd_port
               << ", state_port=" << this->arm_bridge_state_port
+              << ", joint_cmd_port=" << this->arm_joint_command_port
               << std::endl;
 }
 
@@ -617,6 +631,13 @@ void RL_Real_Go2X5::InitializeArmCommandState()
     this->arm_command_size = this->params.Get<int>("arm_command_size", 0);
     this->arm_joint_command_topic = this->params.Get<std::string>("arm_joint_command_topic", "/arm_joint_pos_cmd");
     this->arm_hold_enabled = this->params.Get<bool>("arm_hold_enabled", true);
+    if (!this->params.Get<bool>("key2_prefer_topic_command", true) && !this->arm_joint_command_topic.empty())
+    {
+        std::cout << LOGGER::WARNING
+                  << "key2_prefer_topic_command=false. Key[2] will ignore the latest "
+                  << this->arm_joint_command_topic << " target and use arm_key_pose/arm_hold_pose."
+                  << std::endl;
+    }
 
     const float step_dt = this->params.Get<float>("dt") * this->params.Get<int>("decimation");
     const float smooth_time = this->params.Get<float>("arm_command_smoothing_time", 0.2f);
@@ -1358,18 +1379,19 @@ bool RL_Real_Go2X5::IsArmBridgeStateFreshLocked() const
 
 void RL_Real_Go2X5::SetupArmCommandSubscriber()
 {
+    this->CloseArmCommandIpc();
 #if !defined(USE_CMAKE) && defined(USE_ROS)
-    if (!this->enable_ros2_runtime)
-    {
-        if (!this->arm_joint_command_topic.empty())
-        {
-            std::cout << LOGGER::INFO
-                      << "ROS arm topic subscriber disabled because ROS2 runtime is off." << std::endl;
-        }
-        return;
-    }
     if (this->arm_joint_command_topic.empty())
     {
+        return;
+    }
+    if (!this->enable_ros2_runtime)
+    {
+        std::cout << LOGGER::INFO
+                  << "ROS arm topic subscriber disabled because ROS2 runtime is off. "
+                  << "Expecting localhost IPC relay for " << this->arm_joint_command_topic << "."
+                  << std::endl;
+        this->SetupArmCommandIpc();
         return;
     }
     if (this->arm_joint_command_topic == this->arm_joint_command_topic_active)
@@ -1395,6 +1417,105 @@ void RL_Real_Go2X5::SetupArmCommandSubscriber()
     this->arm_joint_command_topic_active = this->arm_joint_command_topic;
     std::cout << LOGGER::INFO << "arm_joint_command_topic subscribed: "
               << this->arm_joint_command_topic_active << std::endl;
+#endif
+}
+
+void RL_Real_Go2X5::SetupArmCommandIpc()
+{
+#if defined(__linux__)
+    this->CloseArmCommandIpc();
+    if (this->arm_command_size <= 0 || this->arm_joint_command_port <= 0)
+    {
+        return;
+    }
+
+    const int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0)
+    {
+        std::cout << LOGGER::WARNING << "Arm joint command IPC socket create failed: "
+                  << std::strerror(errno) << std::endl;
+        return;
+    }
+
+    const int reuse = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+
+    sockaddr_in bind_addr{};
+    bind_addr.sin_family = AF_INET;
+    bind_addr.sin_port = htons(static_cast<uint16_t>(this->arm_joint_command_port));
+    bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(fd, reinterpret_cast<sockaddr*>(&bind_addr), sizeof(bind_addr)) != 0)
+    {
+        std::cout << LOGGER::WARNING << "Arm joint command IPC bind failed on port "
+                  << this->arm_joint_command_port << ": " << std::strerror(errno) << std::endl;
+        close(fd);
+        return;
+    }
+
+    this->arm_joint_command_socket_fd = fd;
+    std::cout << LOGGER::INFO << "Arm joint command IPC ready. port="
+              << this->arm_joint_command_port << std::endl;
+#else
+    std::cout << LOGGER::WARNING << "Arm joint command IPC is unavailable on this platform." << std::endl;
+#endif
+}
+
+void RL_Real_Go2X5::CloseArmCommandIpc()
+{
+#if defined(__linux__)
+    if (this->arm_joint_command_socket_fd >= 0)
+    {
+        close(this->arm_joint_command_socket_fd);
+        this->arm_joint_command_socket_fd = -1;
+    }
+#endif
+}
+
+void RL_Real_Go2X5::PollArmCommandIpc()
+{
+#if defined(__linux__)
+    if (this->arm_joint_command_socket_fd < 0 || this->arm_command_size <= 0)
+    {
+        return;
+    }
+
+    std::array<uint8_t, 1024> buffer{};
+    while (true)
+    {
+        const ssize_t bytes_read = recv(this->arm_joint_command_socket_fd, buffer.data(), buffer.size(), 0);
+        if (bytes_read < 0)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                break;
+            }
+            std::cout << LOGGER::WARNING << "Arm joint command IPC recv failed: "
+                      << std::strerror(errno) << std::endl;
+            break;
+        }
+        if (bytes_read == 0)
+        {
+            break;
+        }
+
+        std::vector<uint8_t> bytes(buffer.begin(), buffer.begin() + bytes_read);
+        Go2X5IPC::ArmPosePacket packet;
+        std::string error;
+        if (!Go2X5IPC::ParsePosePacket(bytes, packet, &error))
+        {
+            std::cout << LOGGER::WARNING << "Ignore arm joint command IPC packet: "
+                      << error << std::endl;
+            continue;
+        }
+        if (packet.joint_count != static_cast<uint16_t>(this->arm_command_size))
+        {
+            std::cout << LOGGER::WARNING << "Ignore arm joint command IPC packet: expect "
+                      << this->arm_command_size << " joints, got " << packet.joint_count << std::endl;
+            continue;
+        }
+        this->HandleArmJointCommandData(packet.q, "Arm joint command IPC");
+    }
 #endif
 }
 
@@ -2149,6 +2270,7 @@ void RL_Real_Go2X5::SetCommand(const RobotCommand<float> *command)
 void RL_Real_Go2X5::RobotControl()
 {
     this->GetState(&this->robot_state);
+    this->PollArmCommandIpc();
 
     this->StateController(&this->robot_state, &this->robot_command);
     this->MaybePublishKey1CmdVel();
@@ -2167,6 +2289,12 @@ void RL_Real_Go2X5::RobotControl()
 
         const bool key2_prefer_topic_command =
             this->params.Get<bool>("key2_prefer_topic_command", true);
+        if (!key2_prefer_topic_command && topic_received)
+        {
+            std::cout << LOGGER::INFO
+                      << "Key[2] ignoring latest " << this->arm_joint_command_topic
+                      << " because key2_prefer_topic_command=false." << std::endl;
+        }
         const auto key_pose = this->params.Get<std::vector<float>>("arm_key_pose", {});
         const auto hold_pose = this->params.Get<std::vector<float>>("arm_hold_pose", {});
         const auto selected = Go2X5ControlLogic::SelectKey2ArmPose(
@@ -2933,7 +3061,7 @@ void RL_Real_Go2X5::ArmJointCommandCallback(
     {
         return;
     }
-    this->HandleArmJointCommandData(msg->data, "/arm_joint_pos_cmd");
+    this->HandleArmJointCommandData(msg->data, this->arm_joint_command_topic.c_str());
 }
 
 void RL_Real_Go2X5::ArmBridgeStateCallback(

@@ -127,8 +127,8 @@ go2_x5/robot_lab:
   arm_command_smoothing_time: 15.0
   # MuJoCo arm output filter (EMA). Smaller = smoother.
   arm_output_filter_alpha: 0.02
-  # Key[2] single arm pose (hold)
-  arm_key_pose: [1, 2.7, 1.7, 0.0, 0.43, 0.43]  # Arm command sequence (keyboard trigger)  # Num2: play once, Num3: stop
+  # Key[2] fallback pose when no valid /arm_joint_pos_cmd target has been received yet.
+  arm_key_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]
   # Each pose has 6 values (arm_joint1..6), total length = arm_sequence_steps * 6
   arm_sequence_interval: 2.0
   arm_sequence_steps: 3
