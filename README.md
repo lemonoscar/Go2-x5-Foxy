@@ -2,6 +2,16 @@
 
 ROS2 Foxy deployment repository for Unitree **Go2** and **Go2-X5** (sim + real).
 
+## Primary Entry
+
+This README is the source-of-truth entry for repository usage and runtime startup.
+
+- `README.md`: main entry for build, sim, and real-deploy usage
+- `Instruction.md`: detailed environment and bringup checklist
+- `In.md`: minimal quick-start and operator flow notes
+- `rl_sar.md`: change log and historical deployment notes
+
+
 ## Scope
 
 This repository is intentionally trimmed for deployment stability and size:
@@ -12,6 +22,14 @@ This repository is intentionally trimmed for deployment stability and size:
   - `policy/go2/`
   - `policy/go2_x5/`
 - Removed policy data for other robots.
+
+Generated artifacts are not source:
+
+- `build/`
+- `install/`
+- `cmake_build/`
+- `log/`
+
 
 ## Environment
 

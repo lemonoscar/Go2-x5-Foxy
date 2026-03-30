@@ -36,7 +36,7 @@ int main()
     const std::string config_file = source_dir + "/../../policy/go2_x5/robot_lab/config.yaml";
     const std::string fsm_file = source_dir + "/fsm_robot/fsm_go2_x5.hpp";
     const std::string sdk_file = source_dir + "/library/core/rl_sdk/rl_sdk.cpp";
-    const std::string real_file = source_dir + "/src/rl_real_go2_x5.cpp";
+    const std::string real_file = source_dir + "/src/rl_sar/core/rl_real_go2_x5.cpp";
 
     const std::string config_content = ReadAll(config_file);
     const std::string fsm_content = ReadAll(fsm_file);

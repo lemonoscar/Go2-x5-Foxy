@@ -1,13 +1,8 @@
-/*
- * Copyright (c) 2024-2026 Ziqi Fan
- * SPDX-License-Identifier: Apache-2.0
- */
-
 #include <iostream>
 #include <string>
 #include <vector>
 
-#include "go2_x5_ipc_protocol.hpp"
+#include "rl_sar/go2x5/comm/go2_x5_ipc_protocol.hpp"
 
 int main()
 {

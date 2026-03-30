@@ -1,6 +1,3 @@
-/*
- * Copyright (c) 2024-2025 Ziqi Fan
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "observation_buffer.hpp"
@@ -8,7 +5,6 @@
 #include <stdexcept>
 #include <algorithm>
 
-/*
 Output:
 
 Initializing buffer with: obs_dims=[2 3 4], history_length=3, observations_history=[0 0 1 2], priority=time
@@ -31,7 +27,6 @@ Inserting observation t:
 term priority output:
 [ 11 12 11 12 110 120 1100 1200 21 22 23 21 22 23 210 220 230 2100 2200 2300 31 32 33 34 31 32 33 34 310 320 330 340 3100 3200 3300 3400 ]
  
-*/
 
 void test_buffer(const std::string& priority)
 {

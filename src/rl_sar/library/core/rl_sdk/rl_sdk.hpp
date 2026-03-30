@@ -1,6 +1,3 @@
-/*
- * Copyright (c) 2024-2025 Ziqi Fan
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef RL_SDK_HPP
@@ -24,6 +21,7 @@
 #include "inference_runtime.hpp"
 #include "logger.hpp"
 #include "motion_loader.hpp"
+#include "../config/go2_x5_layered_config.hpp"
 
 template <typename T>
 struct RobotCommand
@@ -200,6 +198,7 @@ public:
     ~RL() {};
 
     YamlParams params;
+    RLConfig::LayeredGo2X5ConfigState layered_go2_x5_config;
     Observations<float> obs;
     std::vector<int> obs_dims;
 

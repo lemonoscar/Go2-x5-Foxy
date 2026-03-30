@@ -1,6 +1,3 @@
-/*
- * Copyright (c) 2024-2025 Ziqi Fan
- * SPDX-License-Identifier: Apache-2.0
  *
  * Test program for model inference stability and performance
  * Tests both direct torch usage and abstraction layer

@@ -11,11 +11,13 @@ Usage:
 
 Examples:
   ./scripts/setup_arx_can.sh
+  ./scripts/setup_arx_can.sh auto can0 8
   ./scripts/setup_arx_can.sh /dev/ttyACM0 can0 8
+  ./scripts/setup_arx_can.sh /dev/serial/by-id/usb-XXXX can0 8
   CAN_DEV=/dev/ttyUSB0 CAN_IF=can1 SLCAN_SPEED_CODE=6 ./scripts/setup_arx_can.sh
 
 Defaults:
-  CAN_DEV=/dev/ttyACM0
+  CAN_DEV=auto
   CAN_IF=can0
   SLCAN_SPEED_CODE=8
 EOF
@@ -26,11 +28,84 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     exit 0
 fi
 
-CAN_DEV="${1:-${CAN_DEV:-/dev/ttyACM0}}"
+print_device_candidates() {
+    local path
+    shopt -s nullglob
+    for path in /dev/serial/by-id/* /dev/ttyACM* /dev/ttyUSB*; do
+        [[ -e "${path}" ]] || continue
+        if [[ -L "${path}" ]]; then
+            print_warning "  ${path} -> $(readlink -f "${path}")"
+        else
+            print_warning "  ${path}"
+        fi
+    done
+    shopt -u nullglob
+}
+
+detect_can_dev() {
+    local candidates=()
+    local path=""
+    local resolved=""
+
+    if [[ -d /dev/serial/by-id ]]; then
+        shopt -s nullglob
+        for path in /dev/serial/by-id/*; do
+            [[ -L "${path}" ]] || continue
+            resolved="$(readlink -f "${path}" 2>/dev/null || true)"
+            case "${resolved}" in
+                /dev/ttyACM*|/dev/ttyUSB*)
+                    candidates+=("${path}")
+                    ;;
+            esac
+        done
+        shopt -u nullglob
+        if [[ ${#candidates[@]} -eq 1 ]]; then
+            printf '%s\n' "${candidates[0]}"
+            return 0
+        fi
+        if [[ ${#candidates[@]} -gt 1 ]]; then
+            print_warning "Multiple /dev/serial/by-id candidates found. Please choose one explicitly:"
+            print_device_candidates
+            return 1
+        fi
+    fi
+
+    candidates=()
+    shopt -s nullglob
+    for path in /dev/ttyACM* /dev/ttyUSB*; do
+        [[ -e "${path}" ]] || continue
+        candidates+=("${path}")
+    done
+    shopt -u nullglob
+
+    if [[ ${#candidates[@]} -eq 1 ]]; then
+        printf '%s\n' "${candidates[0]}"
+        return 0
+    fi
+
+    if [[ ${#candidates[@]} -gt 1 ]]; then
+        print_warning "Multiple tty candidates found. Please choose one explicitly:"
+        print_device_candidates
+    else
+        print_warning "No ttyACM/ttyUSB device found."
+    fi
+    return 1
+}
+
+CAN_DEV_INPUT="${1:-${CAN_DEV:-auto}}"
 CAN_IF="${2:-${CAN_IF:-can0}}"
 SLCAN_SPEED_CODE="${3:-${SLCAN_SPEED_CODE:-8}}"
 WAIT_RETRIES="${WAIT_RETRIES:-20}"
 WAIT_INTERVAL_SEC="${WAIT_INTERVAL_SEC:-0.2}"
+
+if [[ -z "${CAN_DEV_INPUT}" || "${CAN_DEV_INPUT}" == "auto" ]]; then
+    if ! CAN_DEV="$(detect_can_dev)"; then
+        print_error "Unable to auto-detect a unique USB-CAN serial device. Set CAN_DEV explicitly."
+        exit 1
+    fi
+else
+    CAN_DEV="${CAN_DEV_INPUT}"
+fi
 
 print_header "[Setting up ARX SocketCAN]"
 print_info "CAN_DEV=${CAN_DEV}"

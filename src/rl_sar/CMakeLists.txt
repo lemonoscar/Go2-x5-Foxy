@@ -253,45 +253,25 @@ else()
     message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
-# unitree_legged_sdk
-set(UNITREE_A1_AVAILABLE OFF)
-if(SYSTEM_TYPE STREQUAL "Linux")
-    set(UNITREE_LEGGED_SDK_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_legged_sdk/include")
-    set(UNITREE_LEGGED_SDK_LIB "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_legged_sdk/lib/${UNITREE_LIB}.so")
-    if(EXISTS "${UNITREE_LEGGED_SDK_INCLUDE}" AND EXISTS "${UNITREE_LEGGED_SDK_LIB}")
-        set(UNITREE_A1_AVAILABLE ON)
-        add_library(unitree_legged_sdk SHARED IMPORTED)
-        set_target_properties(unitree_legged_sdk PROPERTIES
-            INTERFACE_INCLUDE_DIRECTORIES "${UNITREE_LEGGED_SDK_INCLUDE}"
-            IMPORTED_LOCATION "${UNITREE_LEGGED_SDK_LIB}"
-        )
-        set(UNITREE_A1_LIBS Threads::Threads unitree_legged_sdk lcm)
-        if($ENV{ROS_DISTRO} MATCHES "foxy")
-            install(FILES
-                ${UNITREE_LEGGED_SDK_LIB}
-                DESTINATION lib/
-            )
-        endif()
-    else()
-        message(WARNING "unitree_legged_sdk not found; skipping rl_real_a1 target")
-    endif()
-endif()
+# unitree_legged_sdk (removed - A1 support removed, only go2-x5 supported)
 
 # unitree_sdk2
 set(UNITREE_SDK2_AVAILABLE OFF)
 set(UNITREE_SDK2_THIRDPARTY_INCLUDE "")
 set(UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE "")
+set(UNITREE_SDK2_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_sdk2" CACHE PATH
+    "Path to a Unitree SDK2 checkout")
 if(SYSTEM_TYPE STREQUAL "Linux")
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_sdk2/CMakeLists.txt")
+    if(EXISTS "${UNITREE_SDK2_ROOT}/CMakeLists.txt")
         set(UNITREE_SDK2_AVAILABLE ON)
         set(UNITREE_SDK2_THIRDPARTY_INCLUDE
-            "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_sdk2/thirdparty/include")
+            "${UNITREE_SDK2_ROOT}/thirdparty/include")
         set(UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE
-            "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_sdk2/thirdparty/include/ddscxx")
+            "${UNITREE_SDK2_ROOT}/thirdparty/include/ddscxx")
         set(BUILD_EXAMPLES OFF CACHE BOOL "Disable examples build for unitree_sdk2" FORCE)
-        add_subdirectory(library/thirdparty/robot_sdk/unitree/unitree_sdk2)
+        add_subdirectory("${UNITREE_SDK2_ROOT}" "${CMAKE_BINARY_DIR}/unitree_sdk2")
     else()
-        message(WARNING "unitree_sdk2 not found; skipping rl_real_go2/rl_real_go2_x5/rl_real_g1 targets")
+        message(WARNING "unitree_sdk2 not found at ${UNITREE_SDK2_ROOT}; skipping rl_real_go2_x5 target")
     endif()
 endif()
 
@@ -314,45 +294,10 @@ if(USE_ARX_X5_SDK)
     endif()
 endif()
 
-# l4w4_sdk
-add_library(l4w4_sdk INTERFACE)
-target_include_directories(l4w4_sdk INTERFACE
-    library/thirdparty/robot_sdk/zhinao/l4w4_sdk
-)
-target_link_libraries(l4w4_sdk INTERFACE Threads::Threads)
+# l4w4_sdk (removed - L4W4 support removed, only go2-x5 supported)
 
-# Lite3_MotionSDK
-set(LITE3_AVAILABLE OFF)
-if(SYSTEM_TYPE STREQUAL "Linux")
-    set(LITE3_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/deeprobotics/Lite3_MotionSDK/include")
-    set(LITE3_COMMON_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/deeprobotics/Lite3_MotionSDK/include/common")
-    set(LITE3_LIB "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/deeprobotics/Lite3_MotionSDK/lib/libdeeprobotics_legged_sdk_${ARCH_DIR}.so")
-    if(EXISTS "${LITE3_INCLUDE_DIR}" AND EXISTS "${LITE3_LIB}")
-        set(LITE3_AVAILABLE ON)
-        add_library(lite3_motionsdk SHARED IMPORTED)
-        set_target_properties(lite3_motionsdk PROPERTIES
-            INTERFACE_INCLUDE_DIRECTORIES "${LITE3_INCLUDE_DIR};${LITE3_COMMON_INCLUDE_DIR}"
-            IMPORTED_LOCATION "${LITE3_LIB}"
-        )
-        set(LITE3_REAL_LIBS Threads::Threads lite3_motionsdk)
-        if($ENV{ROS_DISTRO} MATCHES "foxy")
-            install(FILES
-                ${LITE3_LIB}
-                DESTINATION lib/
-            )
-        endif()
-    else()
-        message(WARNING "Lite3_MotionSDK not found; skipping rl_real_lite3 target")
-    endif()
-endif()
-# Retroid Gamepad
-if(SYSTEM_TYPE STREQUAL "Linux")
-set(GAMEPAD_SRC
-    ${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/deeprobotics/gamepad/src/gamepad.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/deeprobotics/gamepad/src/retroid_gamepad.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/deeprobotics/gamepad/src/udp_receiver.cpp
-)
-endif()
+# Lite3_MotionSDK (removed - Lite3 support removed, only go2-x5 supported)
+# Retroid Gamepad (removed - only used by Lite3)
 
 if(NOT USE_CMAKE)
     if(FALSE)
@@ -362,6 +307,15 @@ endif()
 
 include_directories(
     include
+    include/rl_sar
+    include/rl_sar/core
+    include/rl_sar/go2x5
+    include/rl_sar/go2x5/arm
+    include/rl_sar/go2x5/control
+    include/rl_sar/go2x5/config
+    include/rl_sar/go2x5/safety
+    include/rl_sar/go2x5/comm
+    include/rl_sar/go2x5/state
     library/core/matplotlibcpp
     library/core/observation_buffer
     library/core/rl_sdk
@@ -371,6 +325,7 @@ include_directories(
     library/core/motion_loader
     library/core/inference_runtime
     library/core/logger
+    library/core/config
     fsm_robot
 )
 
@@ -398,7 +353,7 @@ endif()
 add_library(motion_loader library/core/motion_loader/motion_loader.cpp)
 
 # library for rl sdk
-add_library(rl_sdk library/core/rl_sdk/rl_sdk.cpp)
+add_library(rl_sdk library/core/rl_sdk/rl_sdk.cpp src/rl_sar/go2x5/control/go2_x5_operator_control.cpp)
 target_link_libraries(rl_sdk PUBLIC
     motion_loader
     inference_runtime
@@ -428,7 +383,7 @@ endif()
 
 # executable for rl sim
 if(NOT USE_CMAKE)
-    add_executable(rl_sim src/rl_sim.cpp)
+    add_executable(rl_sim src/rl_sar/core/rl_sim.cpp)
     target_link_libraries(rl_sim
         rl_sdk
         observation_buffer
@@ -456,90 +411,44 @@ if(NOT USE_CMAKE)
     endif()
 endif()
 
-# executable for rl real a1
-if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_A1_AVAILABLE)
-    add_executable(rl_real_a1 src/rl_real_a1.cpp)
-    target_link_libraries(rl_real_a1
-        ${UNITREE_A1_LIBS}
-        rl_sdk
-        observation_buffer
-            ${YAML_CPP_LIBRARIES}
-    )
-    if(NOT USE_CMAKE)
-        if(FALSE)
-            target_link_libraries(rl_real_a1 ${catkin_LIBRARIES})
-        elseif($ENV{ROS_DISTRO} MATCHES "foxy")
-            ament_target_dependencies(rl_real_a1
-                rclcpp
-                geometry_msgs
-            )
-            install(TARGETS rl_real_a1 DESTINATION lib/${PROJECT_NAME})
-        endif()
-    endif()
-endif()
+# executable for rl real a1 (removed - only go2-x5 supported)
 
-if(SYSTEM_TYPE STREQUAL "Linux" AND LITE3_AVAILABLE)
-    add_executable(rl_real_lite3
-        src/rl_real_lite3.cpp
-        ${GAMEPAD_SRC}
-    )
-    target_link_libraries(rl_real_lite3
-        ${LITE3_REAL_LIBS}
-        rl_sdk
-        observation_buffer
-            ${YAML_CPP_LIBRARIES}
-    )
-    target_include_directories(rl_real_lite3 PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/deeprobotics/gamepad/include
-    )
-    if(NOT USE_CMAKE)
-        if(FALSE)
-            target_link_libraries(rl_real_lite3 ${catkin_LIBRARIES})
-        elseif($ENV{ROS_DISTRO} MATCHES "foxy")
-            ament_target_dependencies(rl_real_lite3
-                rclcpp
-                geometry_msgs
-            )
-            install(TARGETS rl_real_lite3 DESTINATION lib/${PROJECT_NAME})
-        endif()
-    endif()
-endif()
+# executable for rl real lite3 (removed - only go2-x5 supported)
 
-# executable for rl real go2
-if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
-    add_executable(rl_real_go2 src/rl_real_go2.cpp)
-    # Force Unitree SDK2 bundled DDS headers to be searched before ROS/system DDS headers.
-    # This avoids ABI/API mismatch in TopicTraits/ddscxx between different CycloneDDS versions.
-    target_include_directories(rl_real_go2 BEFORE PRIVATE
-        ${UNITREE_SDK2_THIRDPARTY_INCLUDE}
-        ${UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE}
-    )
-    target_link_libraries(rl_real_go2
-        unitree_sdk2
-        rl_sdk
-        observation_buffer
-            ${YAML_CPP_LIBRARIES}
-    )
-    # Add unitree_sdk2 library path to RPATH
-    set_target_properties(rl_real_go2 PROPERTIES
-        INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_sdk2/thirdparty/lib/${ARCH_DIR}"
-    )
-    if(NOT USE_CMAKE)
-        if(FALSE)
-            target_link_libraries(rl_real_go2 ${catkin_LIBRARIES})
-        elseif($ENV{ROS_DISTRO} MATCHES "foxy")
-            ament_target_dependencies(rl_real_go2
-                rclcpp
-                geometry_msgs
-            )
-            install(TARGETS rl_real_go2 DESTINATION lib/${PROJECT_NAME})
-        endif()
-    endif()
-endif()
+# executable for rl real go2 (removed - only go2-x5 supported)
 
 # executable for rl real go2_x5
 if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
-    add_executable(rl_real_go2_x5 src/rl_real_go2_x5.cpp)
+    add_executable(rl_real_go2_x5
+        # Core
+        src/rl_sar/core/rl_real_go2_x5.cpp
+        # Arm
+        src/rl_sar/go2x5/arm/go2_x5_arm_runtime.cpp
+        src/rl_sar/go2x5/arm/go2_x5_arm_bridge_runtime.cpp
+        src/rl_sar/go2x5/arm/go2_x5_arm_output_guard.cpp
+        src/rl_sar/go2x5/arm/go2_x5_arm_transport.cpp
+        src/rl_sar/go2x5/arm/go2_x5_arm_controller.cpp
+        src/rl_sar/go2x5/arm/go2_x5_arm_bridge_transport.cpp
+        # Safety
+        src/rl_sar/go2x5/safety/go2_x5_safety_guard.cpp
+        src/rl_sar/go2x5/safety/go2_x5_safe_shutdown.cpp
+        src/rl_sar/go2x5/safety/go2_x5_clip_validation.cpp
+        src/rl_sar/go2x5/safety/go2_x5_limits.cpp
+        # Control
+        src/rl_sar/go2x5/control/go2_x5_operator_control.cpp
+        src/rl_sar/go2x5/control/go2_x5_keyboard.cpp
+        # Comm
+        src/rl_sar/go2x5/comm/go2_x5_ipc.cpp
+        src/rl_sar/go2x5/comm/go2_x5_ros.cpp
+        src/rl_sar/go2x5/comm/go2_x5_unitree_comm.cpp
+        # State
+        src/rl_sar/go2x5/state/go2_x5_state_manager.cpp
+        src/rl_sar/go2x5/state/go2_x5_state_io.cpp
+        src/rl_sar/go2x5/state/go2_x5_state_management.cpp
+        src/rl_sar/go2x5/state/go2_x5_utility.cpp
+        # Config
+        library/core/config/config_loader.cpp
+    )
     target_include_directories(rl_real_go2_x5 BEFORE PRIVATE
         ${UNITREE_SDK2_THIRDPARTY_INCLUDE}
         ${UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE}
@@ -552,7 +461,7 @@ if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
     )
     # Add unitree_sdk2 library path to RPATH
     set_target_properties(rl_real_go2_x5 PROPERTIES
-        INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_sdk2/thirdparty/lib/${ARCH_DIR}"
+        INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${UNITREE_SDK2_ROOT}/thirdparty/lib/${ARCH_DIR}"
     )
     if(NOT USE_CMAKE)
         if(FALSE)
@@ -572,57 +481,9 @@ if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
     endif()
 endif()
 
-# executable for rl real g1
-if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
-    add_executable(rl_real_g1 src/rl_real_g1.cpp)
-    target_include_directories(rl_real_g1 BEFORE PRIVATE
-        ${UNITREE_SDK2_THIRDPARTY_INCLUDE}
-        ${UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE}
-    )
-    target_link_libraries(rl_real_g1
-        unitree_sdk2
-        rl_sdk
-        observation_buffer
-            ${YAML_CPP_LIBRARIES}
-    )
-    # Add unitree_sdk2 library path to RPATH
-    set_target_properties(rl_real_g1 PROPERTIES
-        INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_sdk2/thirdparty/lib/${ARCH_DIR}"
-    )
-    if(NOT USE_CMAKE)
-        if(FALSE)
-            target_link_libraries(rl_real_g1 ${catkin_LIBRARIES})
-        elseif($ENV{ROS_DISTRO} MATCHES "foxy")
-            ament_target_dependencies(rl_real_g1
-                rclcpp
-                geometry_msgs
-            )
-            install(TARGETS rl_real_g1 DESTINATION lib/${PROJECT_NAME})
-        endif()
-    endif()
-endif()
+# executable for rl real g1 (removed - only go2-x5 supported)
 
-# executable for rl real l4w4
-if(SYSTEM_TYPE STREQUAL "Linux")
-    add_executable(rl_real_l4w4 src/rl_real_l4w4.cpp)
-    target_link_libraries(rl_real_l4w4
-        l4w4_sdk
-        rl_sdk
-        observation_buffer
-        ${YAML_CPP_LIBRARIES}
-    )
-    if(NOT USE_CMAKE)
-        if(FALSE)
-            target_link_libraries(rl_real_l4w4 ${catkin_LIBRARIES})
-        elseif($ENV{ROS_DISTRO} MATCHES "foxy")
-            ament_target_dependencies(rl_real_l4w4
-                rclcpp
-                geometry_msgs
-            )
-            install(TARGETS rl_real_l4w4 DESTINATION lib/${PROJECT_NAME})
-        endif()
-    endif()
-endif()
+# executable for rl real l4w4 (removed - only go2-x5 supported)
 
 # executable for actuator net
 if(NOT USE_CMAKE)
@@ -725,7 +586,7 @@ if(USE_MUJOCO)
     endif()
 
     # Build executable
-    add_executable(rl_sim_mujoco src/rl_sim_mujoco.cpp ${MUJOCO_SIMULATE_SRC} ${JOYSTICK_SRC})
+    add_executable(rl_sim_mujoco src/rl_sar/core/rl_sim_mujoco.cpp ${MUJOCO_SIMULATE_SRC} ${JOYSTICK_SRC})
 
     # Suppress deprecation warnings for macOS 15.0 API changes in MuJoCo Simulate
     if(SYSTEM_TYPE STREQUAL "Darwin")
@@ -803,6 +664,14 @@ if(USE_CMAKE AND BUILD_TESTING)
     target_compile_definitions(test_go2_x5_arm_bridge_defaults PRIVATE RL_SAR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME test_go2_x5_arm_bridge_defaults COMMAND test_go2_x5_arm_bridge_defaults)
 
+    add_executable(test_go2_x5_config_split test/test_go2_x5_config_split.cpp)
+    target_compile_definitions(test_go2_x5_config_split PRIVATE RL_SAR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME test_go2_x5_config_split COMMAND test_go2_x5_config_split)
+
+    add_executable(test_go2_x5_launch_defaults test/test_go2_x5_launch_defaults.cpp)
+    target_compile_definitions(test_go2_x5_launch_defaults PRIVATE RL_SAR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME test_go2_x5_launch_defaults COMMAND test_go2_x5_launch_defaults)
+
     add_executable(test_go2_x5_arm_lock_defaults test/test_go2_x5_arm_lock_defaults.cpp)
     target_compile_definitions(test_go2_x5_arm_lock_defaults PRIVATE RL_SAR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME test_go2_x5_arm_lock_defaults COMMAND test_go2_x5_arm_lock_defaults)
@@ -810,6 +679,33 @@ if(USE_CMAKE AND BUILD_TESTING)
     add_executable(test_go2_x5_arm_safety_guards test/test_go2_x5_arm_safety_guards.cpp)
     target_compile_definitions(test_go2_x5_arm_safety_guards PRIVATE RL_SAR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME test_go2_x5_arm_safety_guards COMMAND test_go2_x5_arm_safety_guards)
+
+    add_executable(test_go2_x5_safety_guard test/test_go2_x5_safety_guard.cpp src/rl_sar/go2x5/safety/go2_x5_safety_guard.cpp)
+    add_test(NAME test_go2_x5_safety_guard COMMAND test_go2_x5_safety_guard)
+
+    add_executable(test_go2_x5_arm_runtime test/test_go2_x5_arm_runtime.cpp src/rl_sar/go2x5/arm/go2_x5_arm_runtime.cpp)
+    add_test(NAME test_go2_x5_arm_runtime COMMAND test_go2_x5_arm_runtime)
+
+    add_executable(test_go2_x5_arm_bridge_runtime test/test_go2_x5_arm_bridge_runtime.cpp src/rl_sar/go2x5/arm/go2_x5_arm_bridge_runtime.cpp src/rl_sar/go2x5/safety/go2_x5_safety_guard.cpp)
+    add_test(NAME test_go2_x5_arm_bridge_runtime COMMAND test_go2_x5_arm_bridge_runtime)
+
+    add_executable(test_go2_x5_arm_output_guard test/test_go2_x5_arm_output_guard.cpp src/rl_sar/go2x5/arm/go2_x5_arm_output_guard.cpp)
+    add_test(NAME test_go2_x5_arm_output_guard COMMAND test_go2_x5_arm_output_guard)
+
+    # Config layer tests
+    add_executable(test_config_loader test/test_config_loader.cpp library/core/config/config_loader.cpp)
+    target_link_libraries(test_config_loader ${YAML_CPP_LIBRARIES} Threads::Threads)
+    add_test(NAME test_config_loader COMMAND test_config_loader)
+
+    # Arm transport tests
+    add_executable(test_arm_transport test/test_arm_transport.cpp src/rl_sar/go2x5/arm/go2_x5_arm_transport.cpp src/rl_sar/go2x5/safety/go2_x5_safety_guard.cpp)
+    target_link_libraries(test_arm_transport ${YAML_CPP_LIBRARIES} Threads::Threads)
+    add_test(NAME test_arm_transport COMMAND test_arm_transport)
+
+    # State manager tests
+    add_executable(test_state_manager test/test_state_manager.cpp src/rl_sar/go2x5/state/go2_x5_state_manager.cpp)
+    target_link_libraries(test_state_manager Threads::Threads)
+    add_test(NAME test_state_manager COMMAND test_state_manager)
 endif()
 
 # add_executable(test_observation_buffer test/test_observation_buffer.cpp)

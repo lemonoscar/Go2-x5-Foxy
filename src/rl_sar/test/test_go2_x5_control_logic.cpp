@@ -1,12 +1,7 @@
-/*
- * Copyright (c) 2024-2026 Ziqi Fan
- * SPDX-License-Identifier: Apache-2.0
- */
-
 #include <iostream>
 #include <vector>
 
-#include "go2_x5_control_logic.hpp"
+#include "rl_sar/go2x5/control/go2_x5_control_logic.hpp"
 
 int main()
 {
@@ -26,6 +21,54 @@ int main()
         if (mode != Key1Mode::FixedCommand)
         {
             std::cerr << "Expected Key1Mode::FixedCommand when prefer_navigation_mode=false\n";
+            return 1;
+        }
+    }
+
+    {
+        Key1NavigationPublishRequest request;
+        request.navigation_mode = true;
+        request.key1_pressed = true;
+        if (!ShouldPublishKey1NavigationCmd(request))
+        {
+            std::cerr << "Expected Key1 navigation command to publish when navigation is active and key1 is pressed\n";
+            return 1;
+        }
+        const auto cmd = BuildKey1NavigationCommand(0.6f, -0.1f, 0.2f);
+        if (cmd.x != 0.6f || cmd.y != -0.1f || cmd.yaw != 0.2f)
+        {
+            std::cerr << "Expected Key1 navigation command builder to preserve configured values\n";
+            return 1;
+        }
+    }
+
+    {
+        Key1NavigationPublishRequest request;
+        request.navigation_mode = true;
+        request.key1_pressed = true;
+        request.exclusive_control = true;
+        if (ShouldPublishKey1NavigationCmd(request))
+        {
+            std::cerr << "Expected exclusive control to suppress Key1 navigation publish\n";
+            return 1;
+        }
+        request.exclusive_control = false;
+        request.already_published = true;
+        if (ShouldPublishKey1NavigationCmd(request))
+        {
+            std::cerr << "Expected duplicate Key1 navigation publish to be suppressed\n";
+            return 1;
+        }
+        request.already_published = false;
+        request.publish_enabled = false;
+        if (ShouldPublishKey1NavigationCmd(request))
+        {
+            std::cerr << "Expected disabled Key1 navigation publish flag to suppress output\n";
+            return 1;
+        }
+        if (!ShouldResetKey1NavigationPublished(false) || ShouldResetKey1NavigationPublished(true))
+        {
+            std::cerr << "Expected publish latch reset only when navigation mode is off\n";
             return 1;
         }
     }

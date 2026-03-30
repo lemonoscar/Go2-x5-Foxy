@@ -1,16 +1,15 @@
-/*
- * Copyright (c) 2024-2025 Ziqi Fan
- * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "rl_sdk.hpp"
-#include "go2_x5_control_logic.hpp"
+#include "rl_sar/go2x5/control/go2_x5_control_logic.hpp"
+#include "rl_sar/go2x5/control/go2_x5_operator_control.hpp"
 
 void RL::StateController(const RobotState<float>* state, RobotCommand<float>* command)
 {
+    const auto go2_x5_operator_config =
+        Go2X5OperatorControl::BuildConfig(this->params, this->layered_go2_x5_config);
     const bool exclusive_go2_x5_control =
-        (this->robot_name == "go2_x5") &&
-        this->params.Get<bool>("real_deploy_exclusive_keyboard_control", false);
+        Go2X5OperatorControl::IsExclusiveGo2X5Control(this->robot_name, go2_x5_operator_config);
 
     auto updateState = [&](std::shared_ptr<FSMState> statePtr)
     {
@@ -29,78 +28,45 @@ void RL::StateController(const RobotState<float>* state, RobotCommand<float>* co
 
     this->motiontime++;
 
-    if (this->control.current_keyboard == Input::Keyboard::Num1 && this->robot_name == "go2_x5")
+    const bool in_rl = (this->fsm.current_state_ &&
+                        this->fsm.current_state_->GetStateName().find("RLLocomotion") != std::string::npos);
+    if (Go2X5OperatorControl::ShouldTriggerKey1(this->control, this->robot_name, in_rl))
     {
-        const bool in_rl = (this->fsm.current_state_ &&
-                            this->fsm.current_state_->GetStateName().find("RLLocomotion") != std::string::npos);
-        if (in_rl && this->control.last_keyboard != Input::Keyboard::Num1)
+        if (exclusive_go2_x5_control)
         {
-            if (exclusive_go2_x5_control)
+            Go2X5OperatorControl::ApplyFixedCommand(
+                &this->control, go2_x5_operator_config, 0.0f, 0.0f, 0.0f);
+            std::cout << std::endl << LOGGER::INFO
+                      << "Key[1] pressed: RL policy mode ON (exclusive real deploy control)"
+                      << " x=" << this->control.x
+                      << " y=" << this->control.y
+                      << " yaw=" << this->control.yaw << std::endl;
+        }
+        else
+        {
+            const auto key1_mode = Go2X5OperatorControl::ResolveKey1Mode(go2_x5_operator_config);
+            if (key1_mode == Go2X5ControlLogic::Key1Mode::Navigation)
             {
-                this->control.navigation_mode = false;
-                this->control.x = this->params.Get<float>("fixed_cmd_x", 0.0f);
-                this->control.y = this->params.Get<float>("fixed_cmd_y", 0.0f);
-                this->control.yaw = this->params.Get<float>("fixed_cmd_yaw", 0.0f);
+                Go2X5OperatorControl::ApplyNavigationMode(&this->control);
                 std::cout << std::endl << LOGGER::INFO
-                          << "Key[1] pressed: RL policy mode ON (exclusive real deploy control)"
-                          << " x=" << this->control.x
-                          << " y=" << this->control.y
-                          << " yaw=" << this->control.yaw << std::endl;
+                          << "Key[1] pressed: navigation mode ON (/cmd_vel enabled)" << std::endl;
             }
             else
             {
-                const bool key1_prefer_navigation_mode =
-                    this->params.Get<bool>("key1_prefer_navigation_mode", false);
-                const auto key1_mode =
-                    Go2X5ControlLogic::ResolveKey1Mode(key1_prefer_navigation_mode);
-                if (key1_mode == Go2X5ControlLogic::Key1Mode::Navigation)
-                {
-                    this->control.navigation_mode = true;
-                    this->control.x = 0.0f;
-                    this->control.y = 0.0f;
-                    this->control.yaw = 0.0f;
-                    std::cout << std::endl << LOGGER::INFO
-                              << "Key[1] pressed: navigation mode ON (/cmd_vel enabled)" << std::endl;
-                }
-                else
-                {
-                    this->control.x = this->params.Get<float>("fixed_cmd_x", 0.6f);
-                    this->control.y = this->params.Get<float>("fixed_cmd_y", 0.0f);
-                    this->control.yaw = this->params.Get<float>("fixed_cmd_yaw", 0.0f);
-                    this->control.navigation_mode = false;
-                    std::cout << std::endl << LOGGER::INFO << "Key[1] pressed: fixed cmd x=" << this->control.x
-                              << " y=" << this->control.y << " yaw=" << this->control.yaw << std::endl;
-                }
+                Go2X5OperatorControl::ApplyFixedCommand(
+                    &this->control, go2_x5_operator_config, 0.6f, 0.0f, 0.0f);
+                std::cout << std::endl << LOGGER::INFO << "Key[1] pressed: fixed cmd x=" << this->control.x
+                          << " y=" << this->control.y << " yaw=" << this->control.yaw << std::endl;
             }
-            this->control.last_keyboard = Input::Keyboard::Num1;
         }
+        this->control.last_keyboard = Input::Keyboard::Num1;
     }
 
-    if (!exclusive_go2_x5_control && this->control.current_keyboard == Input::Keyboard::W)
+    if (!exclusive_go2_x5_control)
     {
-        this->control.x += 0.1f;
+        Go2X5OperatorControl::ApplyManualVelocityKey(&this->control, this->control.current_keyboard);
     }
-    if (!exclusive_go2_x5_control && this->control.current_keyboard == Input::Keyboard::S)
-    {
-        this->control.x -= 0.1f;
-    }
-    if (!exclusive_go2_x5_control && this->control.current_keyboard == Input::Keyboard::A)
-    {
-        this->control.y += 0.1f;
-    }
-    if (!exclusive_go2_x5_control && this->control.current_keyboard == Input::Keyboard::D)
-    {
-        this->control.y -= 0.1f;
-    }
-    if (!exclusive_go2_x5_control && this->control.current_keyboard == Input::Keyboard::Q)
-    {
-        this->control.yaw += 0.1f;
-    }
-    if (!exclusive_go2_x5_control && this->control.current_keyboard == Input::Keyboard::E)
-    {
-        this->control.yaw -= 0.1f;
-    }
-    if (!exclusive_go2_x5_control && this->control.current_keyboard == Input::Keyboard::Space)
+    if (!exclusive_go2_x5_control && Go2X5OperatorControl::IsStopKey(this->control.current_keyboard))
     {
         this->control.x = 0.0f;
         this->control.y = 0.0f;
@@ -108,7 +74,7 @@ void RL::StateController(const RobotState<float>* state, RobotCommand<float>* co
         // Allow fixed-command (Key[1]) to be re-triggered after stop.
         this->control.last_keyboard = Input::Keyboard::Space;
     }
-    if (!exclusive_go2_x5_control && this->control.current_keyboard == Input::Keyboard::Num5)
+    if (!exclusive_go2_x5_control && Go2X5OperatorControl::IsZeroKey(this->control.current_keyboard))
     {
         this->control.x = 0.0f;
         this->control.y = 0.0f;
@@ -119,17 +85,17 @@ void RL::StateController(const RobotState<float>* state, RobotCommand<float>* co
             this->control.last_keyboard = Input::Keyboard::Num5;
         }
     }
-    const bool nav_keyboard_down = !exclusive_go2_x5_control &&
-                                   (this->control.current_keyboard == Input::Keyboard::N);
-    const bool nav_gamepad_down = !exclusive_go2_x5_control &&
-                                  (this->control.current_gamepad == Input::Gamepad::X);
+    const bool nav_keyboard_down =
+        Go2X5OperatorControl::IsNavKeyboardDown(this->control, exclusive_go2_x5_control);
+    const bool nav_gamepad_down =
+        Go2X5OperatorControl::IsNavGamepadDown(this->control, exclusive_go2_x5_control);
     const bool nav_toggle_requested =
-        (nav_keyboard_down && !this->control.nav_keyboard_latched) ||
-        (nav_gamepad_down && !this->control.nav_gamepad_latched);
+        Go2X5OperatorControl::ShouldToggleNavigation(this->control, exclusive_go2_x5_control);
     if (nav_toggle_requested)
     {
         this->control.navigation_mode = !this->control.navigation_mode;
-        std::cout << std::endl << LOGGER::INFO << "Navigation mode: " << (this->control.navigation_mode ? "ON" : "OFF") << std::endl;
+        std::cout << std::endl << LOGGER::INFO << "Navigation mode: "
+                  << (this->control.navigation_mode ? "ON" : "OFF") << std::endl;
     }
     this->control.nav_keyboard_latched = nav_keyboard_down;
     this->control.nav_gamepad_latched = nav_gamepad_down;
@@ -138,7 +104,6 @@ void RL::StateController(const RobotState<float>* state, RobotCommand<float>* co
         this->control.navigation_mode = false;
     }
 }
-
 std::vector<float> RL::ComputeObservation()
 {
     std::vector<std::vector<float>> obs_list;
@@ -611,6 +576,17 @@ void RL::ReadYaml(const std::string& file_path, const std::string& file_name)
     catch (YAML::BadFile &e)
     {
         std::cout << LOGGER::ERROR << "The file '" << config_path << "' does not exist" << std::endl;
+        return;
+    }
+
+    if (RLConfig::IsGo2X5ConfigPath(file_path))
+    {
+        this->layered_go2_x5_config.ApplyLoad(file_path, file_name, config_path, config);
+        if (this->layered_go2_x5_config.HasValidationErrors())
+        {
+            throw std::runtime_error(this->layered_go2_x5_config.ValidationSummary());
+        }
+        this->params.config_node = this->layered_go2_x5_config.MergedNode();
         return;
     }
 

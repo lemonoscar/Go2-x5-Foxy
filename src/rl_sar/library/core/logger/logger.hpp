@@ -1,8 +1,3 @@
-/*
- * Copyright (c) 2024-2025 Ziqi Fan
- * SPDX-License-Identifier: Apache-2.0
- */
-
 #ifndef LOGGER_HPP
 #define LOGGER_HPP
 
@@ -93,4 +88,3 @@ namespace LOGGER
 }
 
 #endif // LOGGER_HPP
-
