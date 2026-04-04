@@ -19,7 +19,7 @@
 #include "rl_sar/go2x5/comm/go2_x5_ipc_protocol.hpp"
 #include "rl_sar/protocol/go2_x5_protocol.hpp"
 #include "rl_sar/runtime/supervisor/go2_x5_supervisor.hpp"
-#include "deploy_manifest_runtime.hpp"
+#include "library/core/config/deploy_manifest_runtime.hpp"
 #include "fsm_go2_x5.hpp"
 #include "library/core/config/config_loader.hpp"
 

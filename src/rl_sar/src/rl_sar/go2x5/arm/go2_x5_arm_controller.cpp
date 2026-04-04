@@ -2,6 +2,7 @@
 #include "rl_sar/go2x5/arm_controller.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cerrno>
 #include <cstring>
 #include <stdexcept>
@@ -327,7 +328,7 @@ bool ArmController::ClipArmPoseTarget(std::vector<float>& target,
                                       const std::vector<float>& fallback,
                                       const char* context) const {
     return Go2X5SafetyGuard::ClipArmPoseTargetInPlace(
-        target, fallback, safety_context_, context
+        &target, fallback, safety_context_, context
     );
 }
 
