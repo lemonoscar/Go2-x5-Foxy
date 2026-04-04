@@ -74,19 +74,19 @@ endif()
 
 set(INFERENCE_RUNTIME_DIR "${PROJECT_ROOT_DIR}/library/inference_runtime")
 
-# ONNX Runtime Setup
+# ONNX Runtime Setup (default and only required backend for deployment)
 set(USE_ONNX "OFF")
 set(ONNX_RUNTIME_LIB "")
 set(ONNX_RUNTIME_DIR "${INFERENCE_RUNTIME_DIR}/onnxruntime")
 
-# Detect Jetson platform
+# Detect Jetson platform (for informational purposes only)
 set(IS_JETSON FALSE)
 if(EXISTS "/etc/nv_tegra_release")
     set(IS_JETSON TRUE)
-    message(STATUS "Jetson platform detected - ONNX Runtime will be disabled")
+    message(STATUS "Jetson platform detected - ARM64 ONNX Runtime will be used")
 endif()
 
-if(EXISTS "${ONNX_RUNTIME_DIR}/include" AND EXISTS "${ONNX_RUNTIME_DIR}/lib" AND NOT IS_JETSON)
+if(EXISTS "${ONNX_RUNTIME_DIR}/include" AND EXISTS "${ONNX_RUNTIME_DIR}/lib")
     set(USE_ONNX "ON")
     add_compile_definitions(USE_ONNX)
 
@@ -141,15 +141,16 @@ if(EXISTS "${ONNX_RUNTIME_DIR}/include" AND EXISTS "${ONNX_RUNTIME_DIR}/lib" AND
         set(USE_ONNX "OFF")
     endif()
 else()
-    message(WARNING "ONNX Runtime not found. Please run: bash download_inference_runtime.sh onnx")
+    message(FATAL_ERROR "ONNX Runtime is required for deployment. Please run: bash scripts/download_inference_runtime.sh onnx")
 endif()
 
-# LibTorch Setup
+# LibTorch Setup (optional - only needed for training/research, NOT for deployment)
+option(ENABLE_TORCH_BACKEND "Enable PyTorch/LibTorch backend (not required for ONNX deployment)" OFF)
 set(USE_TORCH "OFF")
 set(TORCH_LIBRARIES "")
 set(LIBTORCH_DIR "${INFERENCE_RUNTIME_DIR}/libtorch")
 
-if(EXISTS "${LIBTORCH_DIR}/include" AND EXISTS "${LIBTORCH_DIR}/lib")
+if(ENABLE_TORCH_BACKEND AND EXISTS "${LIBTORCH_DIR}/include" AND EXISTS "${LIBTORCH_DIR}/lib")
     set(USE_TORCH "ON")
     add_compile_definitions(USE_TORCH)
 
@@ -174,7 +175,9 @@ if(EXISTS "${LIBTORCH_DIR}/include" AND EXISTS "${LIBTORCH_DIR}/lib")
         message(WARNING "LibTorch found but find_package(Torch) failed")
     endif()
 else()
-    message(WARNING "LibTorch not found. Please run: bash download_inference_runtime.sh libtorch")
+    message(STATUS "LibTorch not enabled or not found (optional - only needed for Torch model support)")
+    message(STATUS "  To enable: -DENABLE_TORCH_BACKEND=ON")
+    message(STATUS "  To install: bash scripts/download_inference_runtime.sh libtorch")
 endif()
 
 # RPATH Configuration for inference libraries
@@ -316,6 +319,9 @@ include_directories(
     include/rl_sar/go2x5/safety
     include/rl_sar/go2x5/comm
     include/rl_sar/go2x5/state
+    include/rl_sar/diagnostics
+    include/rl_sar/logger
+    include/rl_sar/adapters
     library/core/matplotlibcpp
     library/core/observation_buffer
     library/core/rl_sdk
@@ -381,6 +387,45 @@ if(NOT USE_CMAKE)
     endif()
 endif()
 
+# library for event logger
+add_library(event_logger src/rl_sar/logger/event_logger.cpp)
+target_link_libraries(event_logger PUBLIC Threads::Threads)
+if(NOT USE_CMAKE)
+    if($ENV{ROS_DISTRO} MATCHES "foxy")
+        install(TARGETS event_logger DESTINATION lib/${PROJECT_NAME})
+    endif()
+endif()
+
+# library for unitree adapter (isolates DDS from main logic)
+if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
+    add_library(unitree_adapter src/rl_sar/adapters/unitree/unitree_adapter.cpp)
+    target_include_directories(unitree_adapter BEFORE PRIVATE
+        ${UNITREE_SDK2_THIRDPARTY_INCLUDE}
+        ${UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE}
+    )
+    target_link_libraries(unitree_adapter
+        unitree_sdk2
+    )
+    # Add unitree_sdk2 library path to RPATH
+    set_target_properties(unitree_adapter PROPERTIES
+        INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${UNITREE_SDK2_ROOT}/thirdparty/lib/${ARCH_DIR}"
+    )
+    if(NOT USE_CMAKE)
+        if($ENV{ROS_DISTRO} MATCHES "foxy")
+            install(TARGETS unitree_adapter DESTINATION lib/${PROJECT_NAME})
+        endif()
+    endif()
+endif()
+
+# library for arx adapter (converges ARX SDK integration)
+add_library(arx_adapter src/rl_sar/adapters/arx/arx_adapter.cpp)
+target_link_libraries(arx_adapter PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
+if(NOT USE_CMAKE)
+    if($ENV{ROS_DISTRO} MATCHES "foxy")
+        install(TARGETS arx_adapter DESTINATION lib/${PROJECT_NAME})
+    endif()
+endif()
+
 # executable for rl sim
 if(NOT USE_CMAKE)
     add_executable(rl_sim src/rl_sar/core/rl_sim.cpp)
@@ -437,6 +482,8 @@ if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
         # Control
         src/rl_sar/go2x5/control/go2_x5_operator_control.cpp
         src/rl_sar/go2x5/control/go2_x5_keyboard.cpp
+        # Adapters
+        src/rl_sar/adapters/unitree/unitree_adapter.cpp
         # Comm
         src/rl_sar/go2x5/comm/go2_x5_ipc.cpp
         src/rl_sar/go2x5/comm/go2_x5_ros.cpp
@@ -446,8 +493,16 @@ if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
         src/rl_sar/go2x5/state/go2_x5_state_io.cpp
         src/rl_sar/go2x5/state/go2_x5_state_management.cpp
         src/rl_sar/go2x5/state/go2_x5_utility.cpp
+        # Runtime
+        src/rl_sar/protocol/go2_x5_protocol.cpp
+        src/rl_sar/runtime/supervisor/go2_x5_supervisor.cpp
+        # Diagnostics
+        src/rl_sar/diagnostics/diagnostics_publisher.cpp
+        src/rl_sar/diagnostics/drift_recorder.cpp
         # Config
         library/core/config/config_loader.cpp
+        library/core/config/deploy_manifest_loader.cpp
+        library/core/config/deploy_manifest_runtime.cpp
     )
     target_include_directories(rl_real_go2_x5 BEFORE PRIVATE
         ${UNITREE_SDK2_THIRDPARTY_INCLUDE}
@@ -457,6 +512,7 @@ if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
         unitree_sdk2
         rl_sdk
         observation_buffer
+        event_logger
             ${YAML_CPP_LIBRARIES}
     )
     # Add unitree_sdk2 library path to RPATH
@@ -660,6 +716,15 @@ if(USE_CMAKE AND BUILD_TESTING)
     add_executable(test_go2_x5_ipc_protocol test/test_go2_x5_ipc_protocol.cpp)
     add_test(NAME test_go2_x5_ipc_protocol COMMAND test_go2_x5_ipc_protocol)
 
+    add_executable(test_go2_x5_protocol_serialization
+        test/test_go2_x5_protocol_serialization.cpp
+        src/rl_sar/protocol/go2_x5_protocol.cpp)
+    add_test(NAME test_go2_x5_protocol_serialization COMMAND test_go2_x5_protocol_serialization)
+    add_test(
+        NAME test_go2_x5_arx_x5_bridge_py_compile
+        COMMAND ${Python3_EXECUTABLE} -m py_compile ${CMAKE_CURRENT_SOURCE_DIR}/scripts/arx_x5_bridge.py
+    )
+
     add_executable(test_go2_x5_arm_bridge_defaults test/test_go2_x5_arm_bridge_defaults.cpp)
     target_compile_definitions(test_go2_x5_arm_bridge_defaults PRIVATE RL_SAR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME test_go2_x5_arm_bridge_defaults COMMAND test_go2_x5_arm_bridge_defaults)
@@ -668,8 +733,11 @@ if(USE_CMAKE AND BUILD_TESTING)
     target_compile_definitions(test_go2_x5_config_split PRIVATE RL_SAR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME test_go2_x5_config_split COMMAND test_go2_x5_config_split)
 
-    add_executable(test_go2_x5_launch_defaults test/test_go2_x5_launch_defaults.cpp)
+    add_executable(test_go2_x5_launch_defaults
+        test/test_go2_x5_launch_defaults.cpp
+        library/core/config/deploy_manifest_loader.cpp)
     target_compile_definitions(test_go2_x5_launch_defaults PRIVATE RL_SAR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(test_go2_x5_launch_defaults ${YAML_CPP_LIBRARIES} Threads::Threads)
     add_test(NAME test_go2_x5_launch_defaults COMMAND test_go2_x5_launch_defaults)
 
     add_executable(test_go2_x5_arm_lock_defaults test/test_go2_x5_arm_lock_defaults.cpp)
@@ -697,6 +765,51 @@ if(USE_CMAKE AND BUILD_TESTING)
     target_link_libraries(test_config_loader ${YAML_CPP_LIBRARIES} Threads::Threads)
     add_test(NAME test_config_loader COMMAND test_config_loader)
 
+    add_executable(test_go2_x5_deploy_manifest_loader
+        test/test_go2_x5_deploy_manifest_loader.cpp
+        library/core/config/deploy_manifest_loader.cpp)
+    target_link_libraries(test_go2_x5_deploy_manifest_loader ${YAML_CPP_LIBRARIES} Threads::Threads)
+    add_test(NAME test_go2_x5_deploy_manifest_loader COMMAND test_go2_x5_deploy_manifest_loader)
+
+    add_executable(test_go2_x5_protocol_contract
+        test/test_go2_x5_protocol_contract.cpp
+        src/rl_sar/protocol/go2_x5_protocol.cpp)
+    add_test(NAME test_go2_x5_protocol_contract COMMAND test_go2_x5_protocol_contract)
+
+    add_executable(test_go2_x5_manifest_contract
+        test/test_go2_x5_manifest_contract.cpp
+        library/core/config/deploy_manifest_loader.cpp
+        library/core/config/deploy_manifest_runtime.cpp)
+    target_link_libraries(test_go2_x5_manifest_contract ${YAML_CPP_LIBRARIES} Threads::Threads)
+    add_test(NAME test_go2_x5_manifest_contract COMMAND test_go2_x5_manifest_contract)
+
+    add_executable(test_go2_x5_supervisor_contract
+        test/test_go2_x5_supervisor_contract.cpp
+        src/rl_sar/runtime/supervisor/go2_x5_supervisor.cpp)
+    add_test(NAME test_go2_x5_supervisor_contract COMMAND test_go2_x5_supervisor_contract)
+
+    add_executable(test_go2_x5_coordinator_contract
+        test/test_go2_x5_coordinator_contract.cpp
+        src/rl_sar/runtime/coordinator/go2_x5_coordinator.cpp
+        src/rl_sar/protocol/go2_x5_protocol.cpp)
+    add_test(NAME test_go2_x5_coordinator_contract COMMAND $<TARGET_FILE:test_go2_x5_coordinator_contract>)
+
+    add_executable(test_go2_x5_freshness_contract
+        test/test_go2_x5_freshness_contract.cpp
+        src/rl_sar/protocol/go2_x5_protocol.cpp
+        src/rl_sar/runtime/supervisor/go2_x5_supervisor.cpp)
+    add_test(NAME test_go2_x5_freshness_contract COMMAND test_go2_x5_freshness_contract)
+
+    add_executable(test_go2_x5_runtime_smoke
+        test/test_go2_x5_runtime_smoke.cpp
+        library/core/config/deploy_manifest_loader.cpp
+        library/core/config/deploy_manifest_runtime.cpp
+        src/rl_sar/protocol/go2_x5_protocol.cpp
+        src/rl_sar/runtime/supervisor/go2_x5_supervisor.cpp)
+    target_compile_definitions(test_go2_x5_runtime_smoke PRIVATE RL_SAR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(test_go2_x5_runtime_smoke ${YAML_CPP_LIBRARIES} Threads::Threads)
+    add_test(NAME test_go2_x5_runtime_smoke COMMAND test_go2_x5_runtime_smoke)
+
     # Arm transport tests
     add_executable(test_arm_transport test/test_arm_transport.cpp src/rl_sar/go2x5/arm/go2_x5_arm_transport.cpp src/rl_sar/go2x5/safety/go2_x5_safety_guard.cpp)
     target_link_libraries(test_arm_transport ${YAML_CPP_LIBRARIES} Threads::Threads)
@@ -706,6 +819,61 @@ if(USE_CMAKE AND BUILD_TESTING)
     add_executable(test_state_manager test/test_state_manager.cpp src/rl_sar/go2x5/state/go2_x5_state_manager.cpp)
     target_link_libraries(test_state_manager Threads::Threads)
     add_test(NAME test_state_manager COMMAND test_state_manager)
+
+    # Adapter tests
+    if(UNITREE_SDK2_AVAILABLE)
+        add_executable(test_unitree_adapter_contract
+            test/test_unitree_adapter_contract.cpp
+            src/rl_sar/adapters/unitree/unitree_adapter.cpp
+            src/rl_sar/protocol/go2_x5_protocol.cpp)
+        target_include_directories(test_unitree_adapter_contract BEFORE PRIVATE
+            ${UNITREE_SDK2_THIRDPARTY_INCLUDE}
+            ${UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE}
+        )
+        target_link_libraries(test_unitree_adapter_contract
+            unitree_sdk2
+            Threads::Threads
+        )
+        target_compile_definitions(test_unitree_adapter_contract PRIVATE UNITREE_SDK2_AVAILABLE)
+        add_test(NAME test_unitree_adapter_contract COMMAND test_unitree_adapter_contract)
+    endif()
+
+    # ARX adapter tests
+    add_executable(test_arm_adapter_contract
+        test/test_arm_adapter_contract.cpp
+        src/rl_sar/adapters/arx/arx_adapter.cpp
+        src/rl_sar/protocol/go2_x5_protocol.cpp)
+    target_include_directories(test_arm_adapter_contract PRIVATE include)
+    target_link_libraries(test_arm_adapter_contract
+        gtest
+        gtest_main
+        Threads::Threads
+        ${CMAKE_DL_LIBS}
+    )
+    add_test(NAME test_arm_adapter_contract COMMAND test_arm_adapter_contract)
+
+    # Diagnostics tests
+    add_executable(test_drift_recorder
+        test/test_drift_recorder.cpp
+        src/rl_sar/diagnostics/drift_recorder.cpp)
+    target_include_directories(test_drift_recorder PRIVATE include)
+    target_link_libraries(test_drift_recorder Threads::Threads)
+    add_test(NAME test_drift_recorder COMMAND test_drift_recorder)
+
+    add_executable(test_diagnostics_publisher
+        test/test_diagnostics_publisher.cpp
+        src/rl_sar/diagnostics/diagnostics_publisher.cpp)
+    target_include_directories(test_diagnostics_publisher PRIVATE include)
+    target_link_libraries(test_diagnostics_publisher Threads::Threads)
+    add_test(NAME test_diagnostics_publisher COMMAND test_diagnostics_publisher)
+
+    # Event logger tests
+    add_executable(test_event_logger
+        test/test_event_logger.cpp
+        src/rl_sar/logger/event_logger.cpp)
+    target_include_directories(test_event_logger PRIVATE include)
+    target_link_libraries(test_event_logger Threads::Threads)
+    add_test(NAME test_event_logger COMMAND test_event_logger)
 endif()
 
 # add_executable(test_observation_buffer test/test_observation_buffer.cpp)
@@ -735,22 +903,10 @@ message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "USE_CMAKE: ${USE_CMAKE}")
 message(STATUS "----------------------------------------")
-message(STATUS "Backend Configuration:")
+message(STATUS "Inference Backend Configuration:")
+message(STATUS "USE_ONNX (required): ${USE_ONNX}")
+message(STATUS "ENABLE_TORCH_BACKEND (optional): ${ENABLE_TORCH_BACKEND}")
 message(STATUS "USE_TORCH: ${USE_TORCH}")
-message(STATUS "USE_ONNX: ${USE_ONNX}")
-if(USE_TORCH)
-    if(Torch_VERSION)
-        message(STATUS "LibTorch version: ${Torch_VERSION}")
-    else()
-        message(STATUS "LibTorch: Available")
-    endif()
-    if(IS_JETSON)
-        message(STATUS "LibTorch: Jetson device detected")
-        if(JETPACK_VERSION)
-            message(STATUS "JetPack version: ${JETPACK_VERSION}")
-        endif()
-    endif()
-endif()
 if(USE_ONNX)
     if(ONNX_RUNTIME_VERSION)
         message(STATUS "ONNX Runtime version: ${ONNX_RUNTIME_VERSION}")
@@ -758,6 +914,16 @@ if(USE_ONNX)
         message(STATUS "ONNX Runtime version: ${onnxruntime_VERSION}")
     else()
         message(STATUS "ONNX Runtime: Available")
+    endif()
+    if(IS_JETSON)
+        message(STATUS "Platform: Jetson (ARM64) - ONNX Runtime recommended")
+    endif()
+endif()
+if(USE_TORCH)
+    if(Torch_VERSION)
+        message(STATUS "LibTorch version: ${Torch_VERSION}")
+    else()
+        message(STATUS "LibTorch: Available (optional backend)")
     endif()
 endif()
 message(STATUS "----------------------------------------")
