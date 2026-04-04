@@ -17,6 +17,9 @@
 #include "rl_sar/go2x5/arm/go2_x5_arm_bridge_runtime.hpp"
 #include "rl_sar/go2x5/config/go2_x5_config.hpp"
 #include "rl_sar/go2x5/comm/go2_x5_ipc_protocol.hpp"
+#include "rl_sar/protocol/go2_x5_protocol.hpp"
+#include "rl_sar/runtime/supervisor/go2_x5_supervisor.hpp"
+#include "deploy_manifest_runtime.hpp"
 #include "fsm_go2_x5.hpp"
 #include "library/core/config/config_loader.hpp"
 
@@ -136,9 +139,27 @@ private:
     xKeySwitchUnion unitree_joy;
 
     std::unique_ptr<RLConfig::ConfigLoader> config_loader_;
+    std::unique_ptr<RLConfig::DeployManifestRuntime> deploy_manifest_runtime_;
     std::unique_ptr<Go2X5Config::Go2X5Config> config_;
     std::unique_ptr<Go2X5State::StateManager> state_manager_;
     std::unique_ptr<Go2X5ArmController::ArmController> arm_controller_;
+    std::unique_ptr<Go2X5Supervisor::Supervisor> supervisor_;
+
+    std::string deploy_manifest_path_ = RLConfig::DeployManifestRuntime::kDefaultManifestPath;
+    bool manifest_valid_ = false;
+    bool runtime_config_valid_ = false;
+    bool runtime_ros2_enabled_explicit_ = false;
+    bool runtime_arm_bridge_transport_explicit_ = false;
+    std::string manifest_hash_;
+    std::chrono::steady_clock::time_point body_state_stamp_{};
+    uint64_t body_state_seq_ = 0;
+    uint64_t arm_state_seq_ = 0;
+    uint64_t policy_seq_ = 0;
+    bool body_state_seen_ = false;
+    bool arm_state_seen_ = false;
+    bool body_state_seq_pending_ = false;
+    bool arm_state_seq_pending_ = false;
+    bool policy_seen_ = false;
 
     void InitializeConfigLoader();
     void InitializeRuntimeOptions(int argc, char **argv);
@@ -146,7 +167,10 @@ private:
     void InitializeArmCommandState();
     void InitializeArmChannelConfig();
     void InitializeRealDeploySafetyConfig();
+    void InitializeSupervisor();
     void ValidateJointMappingOrThrow(const char* stage) const;
+    Go2X5Supervisor::WatchdogInput BuildSupervisorInput() const;
+    void RefreshSupervisorState(const char* source);
 
     int GetNumDofs() const;
     float GetDt() const;
@@ -205,6 +229,12 @@ private:
     void HandleArmJointCommandData(const std::vector<float>& data, const char* context);
     void HandleArmBridgeStateData(const std::vector<float>& data,
                                   bool state_from_backend,
+                                  const char* context,
+                                  bool has_transport_seq = false,
+                                  uint64_t transport_seq = 0);
+    void HandleArmJointCommandFrame(const rl_sar::protocol::ArmCommandFrame& frame,
+                                    const char* context);
+    void HandleArmBridgeStateFrame(const rl_sar::protocol::ArmStateFrame& frame,
                                   const char* context);
     void ReadArmStateFromExternal(RobotState<float> *state);
     void WriteArmCommandToExternal(const RobotCommand<float> *command);
@@ -270,8 +300,12 @@ private:
     std::vector<float> arm_external_shadow_q;
     std::vector<float> arm_external_shadow_dq;
     std::chrono::steady_clock::time_point arm_bridge_state_stamp;
+    std::chrono::steady_clock::time_point arm_tracking_error_high_stamp;
+    uint64_t arm_bridge_command_seq_ = 0;
     bool arm_bridge_state_stream_logged = false;
     bool arm_non_rl_guard_warned = false;
+    bool arm_tracking_error_high_runtime_ = false;
+    double arm_tracking_error_limit_ = 0.0;
     float joystick_deadband = 0.05f;
     bool safe_shutdown_done = false;
     std::atomic<bool> arm_safe_shutdown_active{false};
@@ -280,6 +314,11 @@ private:
     bool policy_inference_log_enabled = true;
     float last_policy_inference_hz = 0.0f;
     std::chrono::steady_clock::time_point last_policy_inference_stamp{};
+    std::atomic<bool> operator_estop_requested_{false};
+    std::atomic<bool> operator_fault_reset_requested_{false};
+    std::atomic<bool> operator_manual_arm_request_{false};
+    std::atomic<bool> policy_health_bad_runtime_{false};
+    std::atomic<bool> body_dds_write_ok_runtime_{true};
     mutable std::chrono::steady_clock::time_point whole_body_clip_warn_stamp{};
     std::chrono::steady_clock::time_point arm_bridge_ipc_send_warn_stamp{};
     std::atomic<bool> loop_exception_requested{false};
@@ -299,6 +338,7 @@ private:
     std::mutex arm_command_mutex;
     std::mutex arm_external_state_mutex;
     std::mutex unitree_state_mutex;
+    mutable std::mutex supervisor_mutex;
 
 #if defined(USE_ROS1) && defined(USE_ROS)
     std::shared_ptr<ros::NodeHandle> ros1_nh;

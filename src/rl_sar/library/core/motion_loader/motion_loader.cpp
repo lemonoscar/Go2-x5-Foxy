@@ -1,5 +1,3 @@
- */
-
 #include "motion_loader.hpp"
 
 MotionLoader::MotionLoader(const std::string& motion_file, float fps)

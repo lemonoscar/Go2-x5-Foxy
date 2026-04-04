@@ -1,5 +1,3 @@
- */
-
 #ifndef RL_SDK_HPP
 #define RL_SDK_HPP
 

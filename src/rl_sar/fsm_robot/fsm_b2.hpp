@@ -1,5 +1,3 @@
- */
-
 #ifndef B2_FSM_HPP
 #define B2_FSM_HPP
 

@@ -2,26 +2,25 @@
 # SPDX-License-Identifier: Apache-2.0
 
 go2_x5/robot_lab:
-  model_name: "policy.pt"
-  # Flat policy obs: 69 (no height_scan, no history)
-  num_observations: 69
-  observations: ["ang_vel", "gravity_vec", "commands", "dof_pos", "dof_vel", "actions", "arm_joint_command"]
+  model_name: "policy_dogonly_20260401_9500.pt"
+  # Dog-only flat policy obs: 260 = 3+3+3+3+18+18+18+187+6+1
+  num_observations: 260
+  observations: ["lin_vel", "ang_vel", "gravity_vec", "commands", "dof_pos", "dof_vel", "actions", "height_scan", "arm_joint_command", "gripper_command"]
   observations_history: []
   observations_history_priority: "time"
+  height_scan_size: 187
+  actions_observation_dim: 18
+  gripper_command_default: 0.0
   clip_obs: 100.0
   clip_actions_lower: [-10.0, -10.0, -10.0,
-                       -10.0, -10.0, -10.0,
-                       -10.0, -10.0, -10.0,
                        -10.0, -10.0, -10.0,
                        -10.0, -10.0, -10.0,
                        -10.0, -10.0, -10.0]
   clip_actions_upper: [10.0, 10.0, 10.0,
                        10.0, 10.0, 10.0,
                        10.0, 10.0, 10.0,
-                       10.0, 10.0, 10.0,
-                       10.0, 10.0, 10.0,
                        10.0, 10.0, 10.0]
-  # Restore leg authority for walking; keep arm conservative
+  # Dog-only policy: 12 leg actions, arm follows external joint command / hold pose.
   rl_kp: [25.0, 25.0, 25.0,
           25.0, 25.0, 25.0,
           25.0, 25.0, 25.0,
@@ -47,13 +46,11 @@ go2_x5/robot_lab:
              3.0, 3.0, 3.0,
              3.0, 3.0, 3.0]
   num_of_dofs: 18
-  # Match training (env.yaml): arm_joint.* scale=0.1
-  action_scale: [0.125, 0.25, 0.08,
-                 0.125, 0.25, 0.08,
-                 0.125, 0.25, 0.08,
-                 0.125, 0.25, 0.08,
-                 0.1, 0.1, 0.1,
-                 0.1, 0.1, 0.1]
+  # Match dog-only training: legs only, 12 actions.
+  action_scale: [0.125, 0.25, 0.25,
+                 0.125, 0.25, 0.25,
+                 0.125, 0.25, 0.25,
+                 0.125, 0.25, 0.25]
   wheel_indices: []
   lin_vel_scale: 1.0
   # Match training (env.yaml): base_ang_vel scale=0.25, velocity_commands scale=1.0
@@ -64,7 +61,7 @@ go2_x5/robot_lab:
   cmd_vel_alpha: 0.2
   joystick_deadband: 0.05
   # Key[1] fixed command (x forward, y lateral, yaw)
-  fixed_cmd_x: 0.5
+  fixed_cmd_x: 0.3
   fixed_cmd_y: 0.0
   fixed_cmd_yaw: 0.0
   # Key[1] behavior:
@@ -86,7 +83,7 @@ go2_x5/robot_lab:
                      0.00, 0.80, -1.50,
                      0.00, 0.80, -1.50,
                      0.00, 0.80, -1.50,
-                     0.00, 1.57, 1.57,
+                     0.00, 0.00, 0.00,
                      0.00, 0.00, 0.00]
   joint_mapping: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
   # Match training init height
@@ -120,24 +117,24 @@ go2_x5/robot_lab:
   key2_prefer_topic_command: true
   # Real deployment default: validate integrated whole-body policy first, not permanent arm hold.
   arm_lock: false
-  arm_lock_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]
+  arm_lock_pose: [0, 0.0, 0.0, 0.0, 0.0, 0.0]
   # When arm pose command is active (Key[2]), lock base pose to avoid spinning
   arm_lock_base_on_pose: false
   # Fixed arm hold pose (used as RL command + joint hold)
-  arm_hold_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]
+  arm_hold_pose: [0, 0.0, 0.0, 0.0, 0.0, 0.0]
   arm_command_smoothing_time: 15.0
   # MuJoCo arm output filter (EMA). Smaller = smoother.
   arm_output_filter_alpha: 0.02
   # Key[2] fallback pose when no valid /arm_joint_pos_cmd target has been received yet.
-  arm_key_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]
+  arm_key_pose: [0, 0.0, 0.0, 0.0, 0.0, 0.0]
   # Each pose has 6 values (arm_joint1..6), total length = arm_sequence_steps * 6
   arm_sequence_interval: 2.0
   arm_sequence_steps: 3
-  arm_sequence: [0.00, 1.57, 1.57, 0.00, 0.00, 0.00, #默认
+  arm_sequence: [0.00, 0.00, 0.00, 0.00, 0.00, 0.00, #默认
                  0.60, 3.00, 1.00, 0.20, 0.00, 0.00, #侧前夹
                  0.20, 1.00, 1.40, -0.20, 0.00, 0.00, #上抬
                  -1.7, 1.4, 2.3, 0.0, 0.43, 0.43]
   # Ctrl+C safe takeover sequence
   shutdown_soft_land_sec: 2.0
   shutdown_hold_sec: 0.6
-  arm_shutdown_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]
+  arm_shutdown_pose: [0, 0.0, 0.0, 0.0, 0.0, 0.0]

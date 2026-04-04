@@ -1,5 +1,3 @@
- */
-
 #include "observation_buffer.hpp"
 #include <stdexcept>
 #include <algorithm>

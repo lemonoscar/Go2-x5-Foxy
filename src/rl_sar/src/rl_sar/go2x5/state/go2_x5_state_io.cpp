@@ -204,8 +204,37 @@ void RL_Real_Go2X5::WriteArmCommandToExternal(const RobotCommand<float> *command
 #if defined(__linux__)
         if (this->arm_bridge_cmd_socket_fd >= 0)
         {
-            const auto bytes = Go2X5IPC::SerializeCommandPacket(
-                static_cast<uint16_t>(this->arm_joint_count), arm_q, arm_dq, arm_kp, arm_kd, arm_tau);
+            rl_sar::protocol::ArmCommandFrame frame;
+            const uint64_t now_ns = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count());
+            uint64_t expire_ns = now_ns + 15'000'000ULL;
+            if (this->deploy_manifest_runtime_ && this->deploy_manifest_runtime_->HasManifest())
+            {
+                const auto snapshot = this->deploy_manifest_runtime_->Snapshot();
+                if (snapshot.arm_command_expire_ms > 0)
+                {
+                    expire_ns = now_ns + static_cast<uint64_t>(snapshot.arm_command_expire_ms) * 1'000'000ULL;
+                }
+            }
+
+            frame.header.seq = ++this->arm_bridge_command_seq_;
+            frame.header.source_monotonic_ns = now_ns;
+            frame.header.publish_monotonic_ns = now_ns;
+            frame.header.validity_flags = rl_sar::protocol::kValidityPayloadValid;
+            frame.joint_count = static_cast<uint16_t>(this->arm_joint_count);
+            frame.command_expire_ns = expire_ns;
+            for (int i = 0; i < this->arm_joint_count && i < static_cast<int>(rl_sar::protocol::kArmJointCount); ++i)
+            {
+                const size_t idx = static_cast<size_t>(i);
+                frame.q[idx] = arm_q[idx];
+                frame.dq[idx] = arm_dq[idx];
+                frame.kp[idx] = arm_kp[idx];
+                frame.kd[idx] = arm_kd[idx];
+                frame.tau[idx] = arm_tau[idx];
+            }
+
+            const auto bytes = rl_sar::protocol::SerializeArmCommandFrame(frame);
             const ssize_t sent = send(
                 this->arm_bridge_cmd_socket_fd,
                 bytes.data(),

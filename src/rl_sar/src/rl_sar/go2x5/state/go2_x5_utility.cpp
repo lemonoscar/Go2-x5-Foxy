@@ -123,6 +123,8 @@ void RL_Real_Go2X5::MaybePublishKey1CmdVel()
 void RL_Real_Go2X5::RecordPolicyInferenceTick()
 {
     const auto now = std::chrono::steady_clock::now();
+    ++this->policy_seq_;
+    this->policy_seen_ = true;
     if (this->last_policy_inference_stamp.time_since_epoch().count() > 0)
     {
         const double dt_sec =
@@ -140,4 +142,6 @@ void RL_Real_Go2X5::RecordPolicyInferenceTick()
                   << std::fixed << std::setprecision(2) << this->last_policy_inference_hz
                   << " Hz" << std::flush;
     }
+
+    this->RefreshSupervisorState("policy_inference");
 }

@@ -1,5 +1,3 @@
- */
-
 #ifndef OBSERVATION_BUFFER_HPP
 #define OBSERVATION_BUFFER_HPP
 

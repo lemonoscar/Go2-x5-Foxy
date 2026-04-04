@@ -75,20 +75,27 @@ void RL_Real_Go2X5::LowStateMessageHandler(const void *message)
     {
         return;
     }
-    std::lock_guard<std::mutex> lock(this->unitree_state_mutex);
-    for (size_t i = 0; i < this->unitree_imu_quaternion.size(); ++i)
     {
-        this->unitree_imu_quaternion[i] = msg->imu_state().quaternion()[static_cast<int>(i)];
+        std::lock_guard<std::mutex> lock(this->unitree_state_mutex);
+        for (size_t i = 0; i < this->unitree_imu_quaternion.size(); ++i)
+        {
+            this->unitree_imu_quaternion[i] = msg->imu_state().quaternion()[static_cast<int>(i)];
+        }
+        for (size_t i = 0; i < this->unitree_imu_gyroscope.size(); ++i)
+        {
+            this->unitree_imu_gyroscope[i] = msg->imu_state().gyroscope()[static_cast<int>(i)];
+        }
+        for (size_t i = 0; i < this->unitree_motor_q.size(); ++i)
+        {
+            const auto &m = msg->motor_state()[static_cast<int>(i)];
+            this->unitree_motor_q[i] = m.q();
+            this->unitree_motor_dq[i] = m.dq();
+            this->unitree_motor_tau[i] = m.tau_est();
+        }
+        this->body_state_stamp_ = std::chrono::steady_clock::now();
+        this->body_state_seen_ = true;
+        this->body_state_seq_pending_ = true;
     }
-    for (size_t i = 0; i < this->unitree_imu_gyroscope.size(); ++i)
-    {
-        this->unitree_imu_gyroscope[i] = msg->imu_state().gyroscope()[static_cast<int>(i)];
-    }
-    for (size_t i = 0; i < this->unitree_motor_q.size(); ++i)
-    {
-        const auto &m = msg->motor_state()[static_cast<int>(i)];
-        this->unitree_motor_q[i] = m.q();
-        this->unitree_motor_dq[i] = m.dq();
-        this->unitree_motor_tau[i] = m.tau_est();
-    }
+
+    this->RefreshSupervisorState("body_state");
 }

@@ -1,5 +1,3 @@
- */
-
 #ifndef GR1T1_FSM_HPP
 #define GR1T1_FSM_HPP
 

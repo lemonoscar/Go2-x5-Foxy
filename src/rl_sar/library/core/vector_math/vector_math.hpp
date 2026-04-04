@@ -1,5 +1,3 @@
- */
-
 /**
  * @file vector_math.hpp
  * @brief Template-based vector mathematical operations library

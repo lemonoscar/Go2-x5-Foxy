@@ -62,10 +62,10 @@ int main()
     RequireNotContains(base_content, "key1_prefer_navigation_mode:", base_file);
     RequireNotContains(base_content, "fixed_cmd_x:", base_file);
 
-    RequireContains(config_content, "model_name: \"policy.pt\"", config_file);
-    RequireContains(config_content, "num_observations: 69", config_file);
-    RequireContains(config_content, "observations: [\"ang_vel\", \"gravity_vec\", \"commands\", \"dof_pos\", \"dof_vel\", \"actions\", \"arm_joint_command\"]", config_file);
-    RequireContains(config_content, "fixed_cmd_x: 0.5", config_file);
+    RequireContains(config_content, "model_name: \"policy_dogonly_20260401_9500.pt\"", config_file);
+    RequireContains(config_content, "num_observations: 260", config_file);
+    RequireContains(config_content, "observations: [\"lin_vel\", \"ang_vel\", \"gravity_vec\", \"commands\", \"dof_pos\", \"dof_vel\", \"actions\", \"height_scan\", \"arm_joint_command\", \"gripper_command\"]", config_file);
+    RequireContains(config_content, "fixed_cmd_x: 0.3", config_file);
     RequireContains(config_content, "fixed_cmd_y: 0.0", config_file);
     RequireContains(config_content, "fixed_cmd_yaw: 0.0", config_file);
     RequireContains(config_content, "key1_prefer_navigation_mode: false", config_file);

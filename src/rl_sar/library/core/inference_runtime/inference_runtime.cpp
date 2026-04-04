@@ -1,5 +1,3 @@
- */
-
 #include "inference_runtime.hpp"
 #include <stdexcept>
 #include <iostream>

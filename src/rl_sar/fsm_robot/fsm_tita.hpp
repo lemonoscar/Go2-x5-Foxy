@@ -1,5 +1,3 @@
- */
-
 #ifndef TITA_FSM_HPP
 #define TITA_FSM_HPP
 

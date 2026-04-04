@@ -1,4 +1,4 @@
- */
+// Test joint mapping validation
 
 #include <iostream>
 #include <string>

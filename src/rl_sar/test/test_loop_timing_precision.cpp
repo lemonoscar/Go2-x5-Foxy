@@ -1,4 +1,4 @@
- */
+// Test file
 
 #include <chrono>
 #include <iostream>

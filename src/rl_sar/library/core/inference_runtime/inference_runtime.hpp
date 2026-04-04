@@ -1,5 +1,3 @@
- */
-
 #ifndef INFERENCE_RUNTIME_HPP
 #define INFERENCE_RUNTIME_HPP
 

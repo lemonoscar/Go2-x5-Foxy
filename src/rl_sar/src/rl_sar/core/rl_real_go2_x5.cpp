@@ -3,6 +3,7 @@
 #include "rl_sar/go2x5/arm/go2_x5_arm_output_guard.hpp"
 #include "rl_sar/go2x5/control/go2_x5_control_logic.hpp"
 #include "rl_sar/go2x5/safety/go2_x5_safety_guard.hpp"
+#include "deploy_manifest_runtime.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cctype>
@@ -10,6 +11,7 @@
 #include <cmath>
 #include <cstring>
 #include <iomanip>
+#include <filesystem>
 #include <limits>
 #include <stdexcept>
 #include <thread>
@@ -29,8 +31,10 @@ namespace
 struct Go2X5RuntimeOptions
 {
     bool enable_ros2_runtime = true;
+    bool enable_ros2_runtime_explicit = false;
     std::string arm_bridge_transport = "ros";
     bool arm_bridge_transport_explicit = false;
+    std::string manifest_path = RLConfig::DeployManifestRuntime::kDefaultManifestPath;
     std::string arm_bridge_ipc_host = Go2X5IPC::kDefaultHost;
     int arm_bridge_cmd_port = Go2X5IPC::kDefaultCommandPort;
     int arm_bridge_state_port = Go2X5IPC::kDefaultStatePort;
@@ -42,6 +46,17 @@ std::string ToLowerCopy(std::string value)
     std::transform(value.begin(), value.end(), value.begin(),
         [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return value;
+}
+
+uint64_t TimePointAgeUs(const std::chrono::steady_clock::time_point& stamp,
+                        const std::chrono::steady_clock::time_point& now)
+{
+    if (stamp.time_since_epoch().count() == 0 || now < stamp)
+    {
+        return std::numeric_limits<uint64_t>::max();
+    }
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(now - stamp).count());
 }
 
 bool ParseBoolArgValue(const std::string& raw_value, const bool fallback)
@@ -79,17 +94,24 @@ Go2X5RuntimeOptions ParseGo2X5RuntimeOptions(int argc, char **argv)
         if (arg == "--disable-ros2-runtime")
         {
             options.enable_ros2_runtime = false;
+            options.enable_ros2_runtime_explicit = true;
             continue;
         }
         if (arg == "--enable-ros2-runtime" && (i + 1) < argc)
         {
             options.enable_ros2_runtime = ParseBoolArgValue(argv[++i], options.enable_ros2_runtime);
+            options.enable_ros2_runtime_explicit = true;
             continue;
         }
         if (arg == "--arm-bridge-transport" && (i + 1) < argc)
         {
             options.arm_bridge_transport = argv[++i];
             options.arm_bridge_transport_explicit = true;
+            continue;
+        }
+        if (arg == "--manifest-path" && (i + 1) < argc)
+        {
+            options.manifest_path = argv[++i];
             continue;
         }
         if (arg == "--arm-bridge-ipc-host" && (i + 1) < argc)
@@ -139,6 +161,7 @@ Go2X5RuntimeOptions ParseGo2X5RuntimeOptions(int argc, char **argv)
     {
         options.arm_joint_command_port = Go2X5IPC::kDefaultJointCommandPort;
     }
+    options.manifest_path = RLConfig::DeployManifestRuntime::NormalizeManifestPath(options.manifest_path);
     return options;
 }
 
@@ -152,6 +175,7 @@ std::vector<char*> BuildRos2Argv(int argc, char **argv)
         const std::string arg = argv[i];
         const bool consumes_next =
             (arg == "--enable-ros2-runtime" ||
+             arg == "--manifest-path" ||
              arg == "--arm-bridge-transport" ||
              arg == "--arm-bridge-ipc-host" ||
              arg == "--arm-bridge-cmd-port" ||
@@ -188,9 +212,8 @@ RL_Real_Go2X5::RL_Real_Go2X5(int argc, char **argv)
 {
     std::cout << LOGGER::INFO << "[Boot] go2_x5 constructor begin" << std::endl;
 
-    // Initialize ConfigLoader first
-    this->InitializeConfigLoader();
     this->InitializeRuntimeOptions(argc, argv);
+    this->InitializeConfigLoader();
 
     // read params from yaml
     this->ang_vel_axis = "body";
@@ -291,6 +314,8 @@ RL_Real_Go2X5::RL_Real_Go2X5(int argc, char **argv)
     }
     std::cout << LOGGER::INFO << "[Boot] Motion control-related service released" << std::endl;
 
+    this->RefreshSupervisorState("boot");
+
     std::cout << LOGGER::INFO << "Real deploy target: go2_x5" << std::endl;
     std::cout << LOGGER::INFO << "arm_joint_command_topic: " << this->arm_joint_command_topic
               << ", arm_hold_enabled: " << (this->arm_hold_enabled ? "true" : "false")
@@ -366,13 +391,17 @@ void RL_Real_Go2X5::InitializeRuntimeOptions(int argc, char **argv)
 {
     const auto options = ParseGo2X5RuntimeOptions(argc, argv);
     this->enable_ros2_runtime = options.enable_ros2_runtime;
+    this->runtime_ros2_enabled_explicit_ = options.enable_ros2_runtime_explicit;
+    this->deploy_manifest_path_ = options.manifest_path;
     this->arm_bridge_transport = options.arm_bridge_transport;
+    this->runtime_arm_bridge_transport_explicit_ = options.arm_bridge_transport_explicit;
     this->arm_bridge_ipc_host = options.arm_bridge_ipc_host;
     this->arm_bridge_cmd_port = options.arm_bridge_cmd_port;
     this->arm_bridge_state_port = options.arm_bridge_state_port;
     this->arm_joint_command_port = options.arm_joint_command_port;
     std::cout << LOGGER::INFO
-              << "[Boot] Runtime options: ros2_runtime=" << (this->enable_ros2_runtime ? "true" : "false")
+              << "[Boot] Runtime options: manifest_path=" << this->deploy_manifest_path_
+              << ", ros2_runtime=" << (this->enable_ros2_runtime ? "true" : "false")
               << ", arm_bridge_transport=" << this->arm_bridge_transport
               << ", ipc_host=" << this->arm_bridge_ipc_host
               << ", cmd_port=" << this->arm_bridge_cmd_port
@@ -406,6 +435,110 @@ void RL_Real_Go2X5::InitializeConfigLoader()
         }
     }
 
+    deploy_manifest_runtime_ = std::make_unique<RLConfig::DeployManifestRuntime>(this->deploy_manifest_path_);
+    const auto manifest_result = deploy_manifest_runtime_->LoadFromFile(this->deploy_manifest_path_);
+    if (manifest_result.is_valid)
+    {
+        const auto& manifest = deploy_manifest_runtime_->Manifest();
+        const auto snapshot = deploy_manifest_runtime_->Snapshot();
+        manifest_hash_ = snapshot.manifest_hash;
+
+        if (!this->runtime_ros2_enabled_explicit_)
+        {
+            this->enable_ros2_runtime = snapshot.ros2_enabled;
+        }
+        if (!this->runtime_arm_bridge_transport_explicit_)
+        {
+            this->arm_bridge_transport = snapshot.arm_bridge_transport;
+        }
+
+        YAML::Node dt_node;
+        dt_node = static_cast<float>(1.0 / std::max(1, snapshot.coordinator_rate_hz));
+        config_loader_->Set("dt", dt_node);
+
+        if (snapshot.policy_rate_hz > 0 && snapshot.coordinator_rate_hz >= snapshot.policy_rate_hz &&
+            (snapshot.coordinator_rate_hz % snapshot.policy_rate_hz) == 0)
+        {
+            YAML::Node decimation_node;
+            decimation_node = snapshot.coordinator_rate_hz / snapshot.policy_rate_hz;
+            config_loader_->Set("decimation", decimation_node);
+        }
+
+        YAML::Node arm_joint_count_node;
+        arm_joint_count_node = manifest.robot.arm_joint_count;
+        config_loader_->Set("arm_joint_count", arm_joint_count_node);
+
+        YAML::Node arm_command_size_node;
+        arm_command_size_node = manifest.robot.arm_joint_count;
+        config_loader_->Set("arm_command_size", arm_command_size_node);
+
+        YAML::Node arm_joint_start_index_node;
+        arm_joint_start_index_node = manifest.robot.leg_joint_count;
+        config_loader_->Set("arm_joint_start_index", arm_joint_start_index_node);
+
+        YAML::Node arm_control_mode_node;
+        arm_control_mode_node = std::string("split");
+        config_loader_->Set("arm_control_mode", arm_control_mode_node);
+
+        YAML::Node arm_bridge_require_state_node;
+        arm_bridge_require_state_node = true;
+        config_loader_->Set("arm_bridge_require_state", arm_bridge_require_state_node);
+
+        YAML::Node arm_bridge_require_live_state_node;
+        arm_bridge_require_live_state_node = manifest.arm_adapter.require_live_state;
+        config_loader_->Set("arm_bridge_require_live_state", arm_bridge_require_live_state_node);
+
+        YAML::Node arm_bridge_state_timeout_sec_node;
+        arm_bridge_state_timeout_sec_node =
+            static_cast<float>(std::max(0, manifest.arm_adapter.arm_state_timeout_ms) / 1000.0f);
+        config_loader_->Set("arm_bridge_state_timeout_sec", arm_bridge_state_timeout_sec_node);
+    }
+
+    const auto schema_result = config_loader_->Validate(RLConfig::ConfigLoader::CreateGo2X5Schema());
+    runtime_config_valid_ = schema_result.is_valid;
+    if (!runtime_config_valid_)
+    {
+        std::cout << LOGGER::WARNING << "[Boot] go2_x5 layered config validation failed: "
+                  << schema_result.error_message << " @ " << schema_result.error_path << std::endl;
+    }
+
+    manifest_valid_ = manifest_result.is_valid && runtime_config_valid_;
+    if (!manifest_result.is_valid)
+    {
+        std::cout << LOGGER::WARNING << "[Boot] Deploy manifest load failed: "
+                  << manifest_result.error_message << " @ " << manifest_result.error_path << std::endl;
+    }
+    else
+    {
+        const auto snapshot = deploy_manifest_runtime_->Snapshot();
+        std::cout << LOGGER::INFO << "[Boot] Deploy manifest loaded: path="
+                  << deploy_manifest_runtime_->ManifestPath()
+                  << ", hash=" << manifest_hash_
+                  << ", protocol_version=" << snapshot.protocol_version
+                  << ", policy_id_hash=" << snapshot.policy_id_hash
+                  << std::endl;
+        std::cout << LOGGER::INFO
+                  << "[Boot] Manifest effective runtime: ros2_enabled="
+                  << (this->enable_ros2_runtime ? "true" : "false")
+                  << ", transport=" << this->arm_bridge_transport
+                  << ", manifest_ros2_enabled=" << (snapshot.ros2_enabled ? "true" : "false")
+                  << ", manifest_transport=" << snapshot.arm_bridge_transport
+                  << ", policy_rate_hz=" << snapshot.policy_rate_hz
+                  << ", coordinator_rate_hz=" << snapshot.coordinator_rate_hz
+                  << ", lowstate_timeout_ms=" << snapshot.lowstate_timeout_ms
+                  << ", arm_state_timeout_ms=" << snapshot.arm_state_timeout_ms
+                  << ", policy_timeout_ms=" << snapshot.policy_timeout_ms
+                  << ", arm_background_send_recv="
+                  << (snapshot.arm_background_send_recv ? "true" : "false")
+                  << ", arm_controller_dt=" << snapshot.arm_controller_dt
+                  << ", arm_cmd_topic=" << snapshot.arm_cmd_topic
+                  << ", arm_state_topic=" << snapshot.arm_state_topic
+                  << ", arm_joint_command_topic=" << snapshot.arm_joint_command_topic
+                  << ", bridge_rmw=" << snapshot.bridge_rmw_implementation
+                  << ", runtime_rmw=" << snapshot.go2_rmw_implementation
+                  << std::endl;
+    }
+
     // Create Go2X5Config wrapper
     config_ = std::make_unique<Go2X5Config::Go2X5Config>(*config_loader_);
 
@@ -414,6 +547,8 @@ void RL_Real_Go2X5::InitializeConfigLoader()
         config_->GetNumDofs(),
         config_->GetArmJointCount()
     );
+
+    InitializeSupervisor();
 
     std::cout << LOGGER::INFO << "[Boot] ConfigLoader initialized" << std::endl;
 }
@@ -425,6 +560,150 @@ void RL_Real_Go2X5::InitializeArmConfig()
     this->InitializeArmChannelConfig();
     this->InitializeRealDeploySafetyConfig();
     std::cout << LOGGER::INFO << "[Boot] Arm configuration initialized" << std::endl;
+}
+
+void RL_Real_Go2X5::InitializeSupervisor()
+{
+    Go2X5Supervisor::Config supervisor_config;
+    if (deploy_manifest_runtime_ && deploy_manifest_runtime_->HasManifest())
+    {
+        const auto& manifest = deploy_manifest_runtime_->Manifest();
+        supervisor_config.probe_window_us =
+            static_cast<uint64_t>(std::max(0.0, manifest.supervisor.probe_window_sec) * 1'000'000.0);
+        supervisor_config.body_state_stale_us =
+            static_cast<uint64_t>(std::max(0, manifest.body_adapter.lowstate_timeout_ms) * 1000ULL);
+        supervisor_config.arm_state_stale_us =
+            static_cast<uint64_t>(std::max(0, manifest.arm_adapter.arm_state_timeout_ms) * 1000ULL);
+        supervisor_config.policy_stale_us =
+            static_cast<uint64_t>(std::max(0, manifest.supervisor.policy_timeout_ms) * 1000ULL);
+        supervisor_config.arm_tracking_error_window_us = 200'000ULL;
+        this->arm_tracking_error_limit_ = manifest.arm_adapter.arm_tracking_error_limit;
+        supervisor_config.degraded_timeout_us =
+            static_cast<uint64_t>(std::max(0.0, manifest.supervisor.degraded_timeout_sec) * 1'000'000.0);
+        supervisor_config.soft_stop_duration_us = 500'000ULL;
+        supervisor_config.require_manifest_valid = true;
+        supervisor_config.fault_latched_requires_manual_reset =
+            manifest.supervisor.fault_latched_requires_manual_reset;
+    }
+
+    supervisor_ = std::make_unique<Go2X5Supervisor::Supervisor>(supervisor_config);
+    std::cout << LOGGER::INFO << "[Boot] Supervisor initialized"
+              << " probe_window_us=" << supervisor_->config().probe_window_us
+              << " body_stale_us=" << supervisor_->config().body_state_stale_us
+              << " arm_stale_us=" << supervisor_->config().arm_state_stale_us
+              << " policy_stale_us=" << supervisor_->config().policy_stale_us
+              << " manifest_valid=" << (manifest_valid_ ? "true" : "false")
+              << std::endl;
+}
+
+Go2X5Supervisor::WatchdogInput RL_Real_Go2X5::BuildSupervisorInput() const
+{
+    Go2X5Supervisor::WatchdogInput input;
+    input.now_monotonic_ns = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    input.config_loaded = (this->config_loader_ != nullptr);
+    input.boot_complete = input.config_loaded;
+    input.manifest_valid = this->manifest_valid_;
+
+    const auto now = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(this->unitree_state_mutex);
+        input.body_state_age_us = TimePointAgeUs(this->body_state_stamp_, now);
+        input.has_body_state_seq = this->body_state_seen_;
+        input.body_state_seq = this->body_state_seq_;
+    }
+    {
+        std::lock_guard<std::mutex> lock(this->arm_external_state_mutex);
+        input.arm_state_age_us = TimePointAgeUs(this->arm_bridge_state_stamp, now);
+        input.arm_tracking_error_age_us =
+            this->arm_tracking_error_high_stamp.time_since_epoch().count() == 0
+                ? 0ULL
+                : TimePointAgeUs(this->arm_tracking_error_high_stamp, now);
+        input.has_arm_state_seq = this->arm_state_seen_;
+        input.arm_state_seq = this->arm_state_seq_;
+        input.arm_backend_valid = this->arm_bridge_state_valid && this->arm_bridge_state_from_backend;
+        input.arm_tracking_error_high = this->arm_tracking_error_high_runtime_;
+    }
+
+    input.policy_age_us = TimePointAgeUs(this->last_policy_inference_stamp, now);
+    input.has_policy_seq = this->policy_seen_;
+    input.policy_seq = this->policy_seq_;
+
+    input.policy_health_bad = this->policy_health_bad_runtime_.load(std::memory_order_relaxed);
+    input.policy_health_ok = !input.policy_health_bad;
+    input.body_dds_write_ok = this->body_dds_write_ok_runtime_.load(std::memory_order_relaxed);
+    input.estop = this->operator_estop_requested_.load(std::memory_order_relaxed);
+    input.soft_stop_request = this->arm_safe_shutdown_active.load();
+    input.fault_reset = this->operator_fault_reset_requested_.load(std::memory_order_relaxed);
+    input.operator_enable = this->control.navigation_mode;
+    input.operator_disable = !this->control.navigation_mode;
+    input.manual_arm_request = this->operator_manual_arm_request_.load(std::memory_order_relaxed);
+    const auto& supervisor_config = this->supervisor_->config();
+    input.allow_recover = this->manifest_valid_ &&
+        input.body_state_age_us <= supervisor_config.body_state_stale_us &&
+        input.arm_state_age_us <= supervisor_config.arm_state_stale_us &&
+        input.policy_age_us <= supervisor_config.policy_stale_us;
+    input.probe_pass = input.manifest_valid &&
+        input.has_body_state_seq &&
+        input.has_arm_state_seq &&
+        input.has_policy_seq &&
+        input.body_state_age_us <= supervisor_config.body_state_stale_us &&
+        input.arm_state_age_us <= supervisor_config.arm_state_stale_us &&
+        input.policy_age_us <= supervisor_config.policy_stale_us;
+    input.probe_fail = !input.manifest_valid;
+    return input;
+}
+
+void RL_Real_Go2X5::RefreshSupervisorState(const char* source)
+{
+    if (!this->supervisor_)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> supervisor_lock(this->supervisor_mutex);
+
+    {
+        std::lock_guard<std::mutex> lock(this->unitree_state_mutex);
+        if (this->body_state_seq_pending_)
+        {
+            ++this->body_state_seq_;
+            this->body_state_seq_pending_ = false;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(this->arm_external_state_mutex);
+        if (this->arm_state_seq_pending_)
+        {
+            ++this->arm_state_seq_;
+            this->arm_state_seq_pending_ = false;
+        }
+    }
+
+    const auto input = this->BuildSupervisorInput();
+    const auto result = this->supervisor_->Step(input);
+
+    if (this->state_manager_)
+    {
+        this->state_manager_->SetArmBridgeConnected(
+            input.arm_backend_valid &&
+            input.arm_state_age_us <= this->supervisor_->config().arm_state_stale_us);
+    }
+
+    if (result.mode_changed)
+    {
+        std::cout << LOGGER::INFO
+                  << "[Supervisor] " << source << ": "
+                  << Go2X5Supervisor::ToString(result.previous_mode)
+                  << " -> " << Go2X5Supervisor::ToString(result.current_mode)
+                  << " reason=" << Go2X5Supervisor::ToString(result.reason_code)
+                  << " manifest_valid=" << (input.manifest_valid ? "true" : "false")
+                  << " body_age_us=" << result.watchdog.body_state_age_us
+                  << " arm_age_us=" << result.watchdog.arm_state_age_us
+                  << " policy_age_us=" << result.watchdog.policy_age_us
+                  << std::endl;
+    }
 }
 
 int RL_Real_Go2X5::GetNumDofs() const
@@ -1042,7 +1321,30 @@ void RL_Real_Go2X5::SetCommand(const RobotCommand<float> *command)
     this->WriteArmCommandToExternal(&command_local);
 
     this->unitree_low_command.crc() = Crc32Core((uint32_t *)&unitree_low_command, (sizeof(unitree_go::msg::dds_::LowCmd_) >> 2) - 1);
-    lowcmd_publisher->Write(unitree_low_command);
+    bool body_dds_write_ok = false;
+    try
+    {
+        if (lowcmd_publisher)
+        {
+            lowcmd_publisher->Write(unitree_low_command);
+            body_dds_write_ok = true;
+        }
+        else
+        {
+            std::cout << LOGGER::WARNING
+                      << "[SupervisorInput] source=lowcmd_write reason=publisher_unavailable"
+                      << std::endl;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cout << LOGGER::WARNING
+                  << "[SupervisorInput] source=lowcmd_write reason=publish_exception: "
+                  << e.what() << std::endl;
+    }
+
+    this->body_dds_write_ok_runtime_.store(body_dds_write_ok, std::memory_order_relaxed);
+    this->RefreshSupervisorState("lowcmd_write");
 }
 
 void RL_Real_Go2X5::RobotControl()
@@ -1052,6 +1354,39 @@ void RL_Real_Go2X5::RobotControl()
 
     this->StateController(&this->robot_state, &this->robot_command);
     this->MaybePublishKey1CmdVel();
+
+    bool operator_input_triggered = false;
+    if (this->control.current_keyboard == Input::Keyboard::Escape)
+    {
+        this->operator_estop_requested_.store(true, std::memory_order_relaxed);
+        std::cout << LOGGER::WARNING
+                  << "[SupervisorInput] source=keyboard:Escape reason=estop" << std::endl;
+        operator_input_triggered = true;
+    }
+    if (this->control.current_keyboard == Input::Keyboard::R ||
+        this->control.current_gamepad == Input::Gamepad::RB_Y)
+    {
+        this->operator_fault_reset_requested_.store(true, std::memory_order_relaxed);
+        std::cout << LOGGER::INFO
+                  << "[SupervisorInput] source="
+                  << (this->control.current_keyboard == Input::Keyboard::R ? "keyboard:R" : "gamepad:RB_Y")
+                  << " reason=fault_reset" << std::endl;
+        operator_input_triggered = true;
+    }
+    if (this->arm_split_control_enabled && this->control.current_keyboard == Input::Keyboard::Num2)
+    {
+        this->operator_manual_arm_request_.store(true, std::memory_order_relaxed);
+        std::cout << LOGGER::INFO
+                  << "[SupervisorInput] source=keyboard:Num2 reason=manual_arm_request" << std::endl;
+        operator_input_triggered = true;
+    }
+    if (operator_input_triggered)
+    {
+        this->RefreshSupervisorState("operator_input");
+        this->operator_estop_requested_.store(false, std::memory_order_relaxed);
+        this->operator_fault_reset_requested_.store(false, std::memory_order_relaxed);
+        this->operator_manual_arm_request_.store(false, std::memory_order_relaxed);
+    }
 
     if (this->control.current_keyboard == Input::Keyboard::Num2)
     {
@@ -1230,16 +1565,29 @@ std::vector<float> RL_Real_Go2X5::Forward()
     std::vector<float> clamped_obs = this->ComputeObservation();
 
     std::vector<float> actions;
+    bool policy_health_bad = false;
     const auto observations_history = config_->GetObservationsHistory();
-    if (!observations_history.empty())
+    try
     {
-        this->history_obs_buf.insert(clamped_obs);
-        this->history_obs = this->history_obs_buf.get_obs_vec(observations_history);
-        actions = this->model->forward({this->history_obs});
+        if (!observations_history.empty())
+        {
+            this->history_obs_buf.insert(clamped_obs);
+            this->history_obs = this->history_obs_buf.get_obs_vec(observations_history);
+            actions = this->model->forward({this->history_obs});
+        }
+        else
+        {
+            actions = this->model->forward({clamped_obs});
+        }
     }
-    else
+    catch (const std::exception& e)
     {
-        actions = this->model->forward({clamped_obs});
+        policy_health_bad = true;
+        this->policy_health_bad_runtime_.store(true, std::memory_order_relaxed);
+        std::cout << LOGGER::WARNING
+                  << "Policy inference failed: " << e.what()
+                  << ". Use zero action fallback." << std::endl;
+        return this->obs.actions;
     }
 
     const auto action_scale = config_->GetActionScale();
@@ -1248,13 +1596,16 @@ std::vector<float> RL_Real_Go2X5::Forward()
         !action_scale.empty()
             ? action_scale.size()
             : static_cast<size_t>(std::max(0, num_dofs));
-    if (expected_action_dim > 0 && actions.size() != expected_action_dim)
+    const bool action_dim_mismatch =
+        expected_action_dim > 0 && actions.size() != expected_action_dim;
+    if (action_dim_mismatch)
     {
         std::cout << LOGGER::ERROR
                   << "Policy action dimension mismatch: expect " << expected_action_dim
                   << ", got " << actions.size()
                   << ". Use zero action fallback." << std::endl;
         actions.assign(expected_action_dim, 0.0f);
+        policy_health_bad = true;
     }
 
     bool non_finite_action = false;
@@ -1268,10 +1619,13 @@ std::vector<float> RL_Real_Go2X5::Forward()
     }
     if (non_finite_action)
     {
+        policy_health_bad = true;
         std::cout << LOGGER::WARNING
                   << "Policy produced non-finite action. Replace invalid entries with zero."
                   << std::endl;
     }
+
+    this->policy_health_bad_runtime_.store(policy_health_bad, std::memory_order_relaxed);
 
     const auto clip_actions_upper = config_->GetClipActionsUpper();
     const auto clip_actions_lower = config_->GetClipActionsLower();

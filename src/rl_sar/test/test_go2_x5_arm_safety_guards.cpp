@@ -115,7 +115,7 @@ int main()
     RequireContains(config_content, "arm_bridge_shadow_feedback_enabled: false", config_file);
     RequireContains(config_content, "real_deploy_exclusive_keyboard_control: true", config_file);
     RequireContains(config_content, "policy_inference_log_enabled: true", config_file);
-    RequireContains(config_content, "fixed_cmd_x: 0.5", config_file);
+    RequireContains(config_content, "fixed_cmd_x: 0.3", config_file);
     RequireContains(config_content, "fixed_cmd_y: 0.0", config_file);
     RequireContains(config_content, "fixed_cmd_yaw: 0.0", config_file);
     RequireContains(config_content, "key1_prefer_navigation_mode: false", config_file);

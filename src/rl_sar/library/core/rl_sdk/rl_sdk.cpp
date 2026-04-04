@@ -1,5 +1,3 @@
- */
-
 #include "rl_sdk.hpp"
 #include "rl_sar/go2x5/control/go2_x5_control_logic.hpp"
 #include "rl_sar/go2x5/control/go2_x5_operator_control.hpp"
@@ -154,7 +152,23 @@ std::vector<float> RL::ComputeObservation()
         }
         else if (observation == "actions")
         {
-            obs_list.push_back(this->obs.actions);
+            const int target_dim = this->params.Get<int>("actions_observation_dim", 0);
+            if (target_dim > 0 && static_cast<int>(this->obs.actions.size()) < target_dim)
+            {
+                std::vector<float> padded = this->obs.actions;
+                padded.resize(static_cast<size_t>(target_dim), 0.0f);
+                obs_list.push_back(std::move(padded));
+            }
+            else if (target_dim > 0 && static_cast<int>(this->obs.actions.size()) > target_dim)
+            {
+                std::vector<float> trimmed = this->obs.actions;
+                trimmed.resize(static_cast<size_t>(target_dim));
+                obs_list.push_back(std::move(trimmed));
+            }
+            else
+            {
+                obs_list.push_back(this->obs.actions);
+            }
         }
         else if (observation == "height_scan")
         {
@@ -163,6 +177,10 @@ std::vector<float> RL::ComputeObservation()
         else if (observation == "arm_joint_command")
         {
             obs_list.push_back(this->obs.arm_joint_command);
+        }
+        else if (observation == "gripper_command")
+        {
+            obs_list.push_back({this->params.Get<float>("gripper_command_default", 0.0f)});
         }
         // ============= Other Observations =============
         else if (observation == "whole_body_tracking/motion_command")
@@ -348,25 +366,58 @@ void RL::ComputeOutput(const std::vector<float> &actions, std::vector<float> &ou
     // 2) Controller type is effort via PD (RobotJointController/Group uses q, dq, kp, kd, tau).
     // 3) No unit conversions or sign flips here; action_scale + default_dof_pos are applied directly.
     // 4) Action clipping happens in Forward() via clip_actions_*; no extra filtering/slew here.
-    std::vector<float> actions_scaled = actions * this->params.Get<std::vector<float>>("action_scale");
-    std::vector<float> pos_actions_scaled = actions_scaled;
-    std::vector<float> vel_actions_scaled(actions.size(), 0.0f);
+    const auto default_dof_pos = this->params.Get<std::vector<float>>("default_dof_pos");
+    const auto action_scale = this->params.Get<std::vector<float>>("action_scale");
+    const auto rl_kp = this->params.Get<std::vector<float>>("rl_kp");
+    const auto rl_kd = this->params.Get<std::vector<float>>("rl_kd");
+    const auto torque_limits = this->params.Get<std::vector<float>>("torque_limits");
+    const int num_dofs = this->params.Get<int>("num_of_dofs");
+    const size_t full_dim = !default_dof_pos.empty()
+        ? default_dof_pos.size()
+        : static_cast<size_t>(std::max(0, num_dofs));
+
+    output_dof_pos = default_dof_pos;
+    if (output_dof_pos.size() < full_dim)
+    {
+        output_dof_pos.resize(full_dim, 0.0f);
+    }
+    output_dof_vel.assign(full_dim, 0.0f);
+    output_dof_tau.assign(full_dim, 0.0f);
+
+    std::vector<float> pos_actions_scaled(full_dim, 0.0f);
+    std::vector<float> vel_actions_scaled(full_dim, 0.0f);
+    const size_t action_dim = actions.size();
+    for (size_t i = 0; i < action_dim && i < full_dim; ++i)
+    {
+        const float scale = (i < action_scale.size()) ? action_scale[i] : 1.0f;
+        pos_actions_scaled[i] = actions[i] * scale;
+    }
     for (int i : this->params.Get<std::vector<int>>("wheel_indices"))
     {
-        if (i >= 0 &&
-            i < static_cast<int>(pos_actions_scaled.size()) &&
-            i < static_cast<int>(vel_actions_scaled.size()) &&
-            i < static_cast<int>(actions_scaled.size()))
+        if (i >= 0 && static_cast<size_t>(i) < full_dim)
         {
+            vel_actions_scaled[static_cast<size_t>(i)] = pos_actions_scaled[static_cast<size_t>(i)];
             pos_actions_scaled[static_cast<size_t>(i)] = 0.0f;
-            vel_actions_scaled[static_cast<size_t>(i)] = actions_scaled[static_cast<size_t>(i)];
         }
     }
-    std::vector<float> all_actions_scaled = pos_actions_scaled + vel_actions_scaled;
-    output_dof_pos = pos_actions_scaled + this->params.Get<std::vector<float>>("default_dof_pos");
-    output_dof_vel = vel_actions_scaled;
-    output_dof_tau = this->params.Get<std::vector<float>>("rl_kp") * (all_actions_scaled + this->params.Get<std::vector<float>>("default_dof_pos") - this->obs.dof_pos) - this->params.Get<std::vector<float>>("rl_kd") * this->obs.dof_vel;
-    output_dof_tau = clamp(output_dof_tau, -this->params.Get<std::vector<float>>("torque_limits"), this->params.Get<std::vector<float>>("torque_limits"));
+
+    std::vector<float> all_actions_scaled(full_dim, 0.0f);
+    for (size_t i = 0; i < full_dim; ++i)
+    {
+        all_actions_scaled[i] = pos_actions_scaled[i] + vel_actions_scaled[i];
+        output_dof_pos[i] += pos_actions_scaled[i];
+        output_dof_vel[i] = vel_actions_scaled[i];
+    }
+
+    for (size_t i = 0; i < full_dim; ++i)
+    {
+        const float kp = (i < rl_kp.size()) ? rl_kp[i] : 0.0f;
+        const float kd = (i < rl_kd.size()) ? rl_kd[i] : 0.0f;
+        const float q_obs = (i < this->obs.dof_pos.size()) ? this->obs.dof_pos[i] : 0.0f;
+        const float dq_obs = (i < this->obs.dof_vel.size()) ? this->obs.dof_vel[i] : 0.0f;
+        output_dof_tau[i] = kp * (all_actions_scaled[i] + output_dof_pos[i] - pos_actions_scaled[i] - q_obs) - kd * dq_obs;
+    }
+    output_dof_tau = clamp(output_dof_tau, -torque_limits, torque_limits);
 }
 
 int RL::InverseJointMapping(int idx) const

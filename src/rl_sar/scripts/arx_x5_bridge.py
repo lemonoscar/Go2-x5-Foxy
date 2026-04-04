@@ -12,11 +12,13 @@ import subprocess
 import struct
 import sys
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
+import yaml
 
 
 def _to_float_list(value: Any, expected_len: int) -> Optional[List[float]]:
@@ -77,6 +79,34 @@ def _load_limit_list(raw_value: Any, fallback: Sequence[float], expected_len: in
     if values is None or len(values) != expected_len:
         return [float(x) for x in fallback[:expected_len]]
     return values
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _default_manifest_path() -> str:
+    return str(_repo_root() / "deploy" / "go2_x5_real.yaml")
+
+
+def _load_manifest(path: str) -> Dict[str, Any]:
+    resolved = path or _default_manifest_path()
+    with open(resolved, "r", encoding="utf-8") as stream:
+        data = yaml.safe_load(stream) or {}
+    if not isinstance(data, dict):
+        raise RuntimeError(f"deploy manifest must be a mapping: {resolved}")
+    return data
+
+
+def _manifest_section(manifest: Dict[str, Any], key: str) -> Dict[str, Any]:
+    value = manifest.get(key, {})
+    return value if isinstance(value, dict) else {}
+
+
+def _keep_override_or_manifest(raw_value: Any, builtin_default: Any, manifest_value: Any) -> Any:
+    if raw_value == builtin_default:
+        return manifest_value
+    return raw_value
 
 
 class _ProbeLogger:
@@ -152,6 +182,173 @@ _IPC_POSE_MAGIC = b"GX5P"
 _IPC_CMD_HEADER = struct.Struct("<4sHH")
 _IPC_STATE_HEADER = struct.Struct("<4sHHI")
 _IPC_POSE_HEADER = struct.Struct("<4sHH")
+
+_FRAME_MAGIC = 0x50355847
+_FRAME_VERSION = 1
+_FRAME_HEADER = struct.Struct("<IHHQQQIHHII")
+_FRAME_TYPE_ARM_STATE = 2
+_FRAME_TYPE_ARM_COMMAND = 6
+_ARM_COMMAND_PAYLOAD = struct.Struct("<HHQ6f6f6f6f6ff")
+_ARM_STATE_PAYLOAD = struct.Struct("<HH6f6f6f6f6fIIQ")
+_VALIDITY_PAYLOAD_VALID = 1 << 0
+_VALIDITY_FROM_BACKEND = 1 << 1
+_VALIDITY_SHADOW_STATE = 1 << 3
+
+
+def _monotonic_ns() -> int:
+    return time.monotonic_ns()
+
+
+def _serialize_frame_header(
+    msg_type: int,
+    *,
+    seq: int,
+    source_monotonic_ns: int,
+    publish_monotonic_ns: int,
+    source_id: int = 0,
+    mode: int = 0,
+    validity_flags: int = 0,
+    fault_flags: int = 0,
+    payload_bytes: int,
+) -> bytes:
+    return _FRAME_HEADER.pack(
+        _FRAME_MAGIC,
+        _FRAME_VERSION,
+        int(msg_type),
+        int(seq),
+        int(source_monotonic_ns),
+        int(publish_monotonic_ns),
+        int(source_id),
+        int(mode),
+        int(validity_flags),
+        int(fault_flags),
+        int(payload_bytes),
+    )
+
+
+def _parse_frame_header(data: bytes, expected_type: int, expected_payload_size: int) -> Tuple[Optional[Dict[str, int]], str]:
+    if len(data) != _FRAME_HEADER.size + expected_payload_size:
+        return None, "unexpected frame size"
+    unpacked = _FRAME_HEADER.unpack_from(data, 0)
+    header = {
+        "magic": int(unpacked[0]),
+        "version": int(unpacked[1]),
+        "msg_type": int(unpacked[2]),
+        "seq": int(unpacked[3]),
+        "source_monotonic_ns": int(unpacked[4]),
+        "publish_monotonic_ns": int(unpacked[5]),
+        "source_id": int(unpacked[6]),
+        "mode": int(unpacked[7]),
+        "validity_flags": int(unpacked[8]),
+        "fault_flags": int(unpacked[9]),
+        "payload_bytes": int(unpacked[10]),
+    }
+    if header["magic"] != _FRAME_MAGIC:
+        return None, "invalid frame magic"
+    if header["version"] != _FRAME_VERSION:
+        return None, f"unsupported frame version {header['version']}"
+    if header["msg_type"] != expected_type:
+        return None, "unexpected frame type"
+    if header["payload_bytes"] != expected_payload_size:
+        return None, "unexpected payload size"
+    return header, ""
+
+
+def _serialize_typed_arm_command_frame(
+    *,
+    seq: int,
+    q: Sequence[float],
+    dq: Sequence[float],
+    kp: Sequence[float],
+    kd: Sequence[float],
+    tau: Sequence[float],
+    command_expire_ns: int,
+    gripper_target: float = 0.0,
+    interpolation_hint: int = 0,
+) -> bytes:
+    now_ns = _monotonic_ns()
+    payload = _ARM_COMMAND_PAYLOAD.pack(
+        6,
+        int(interpolation_hint),
+        int(command_expire_ns),
+        *[float(q[i]) if i < len(q) else 0.0 for i in range(6)],
+        *[float(dq[i]) if i < len(dq) else 0.0 for i in range(6)],
+        *[float(kp[i]) if i < len(kp) else 0.0 for i in range(6)],
+        *[float(kd[i]) if i < len(kd) else 0.0 for i in range(6)],
+        *[float(tau[i]) if i < len(tau) else 0.0 for i in range(6)],
+        float(gripper_target),
+    )
+    header = _serialize_frame_header(
+        _FRAME_TYPE_ARM_COMMAND,
+        seq=seq,
+        source_monotonic_ns=now_ns,
+        publish_monotonic_ns=now_ns,
+        validity_flags=_VALIDITY_PAYLOAD_VALID,
+        payload_bytes=_ARM_COMMAND_PAYLOAD.size,
+    )
+    return header + payload
+
+
+def _parse_typed_arm_command_frame(data: bytes) -> Tuple[Optional[Dict[str, Any]], str]:
+    header, error = _parse_frame_header(data, _FRAME_TYPE_ARM_COMMAND, _ARM_COMMAND_PAYLOAD.size)
+    if header is None:
+        return None, error
+    unpacked = _ARM_COMMAND_PAYLOAD.unpack_from(data, _FRAME_HEADER.size)
+    frame = {
+        "header": header,
+        "joint_count": int(unpacked[0]),
+        "interpolation_hint": int(unpacked[1]),
+        "command_expire_ns": int(unpacked[2]),
+        "q": [float(x) for x in unpacked[3:9]],
+        "dq": [float(x) for x in unpacked[9:15]],
+        "kp": [float(x) for x in unpacked[15:21]],
+        "kd": [float(x) for x in unpacked[21:27]],
+        "tau": [float(x) for x in unpacked[27:33]],
+        "gripper_target": float(unpacked[33]),
+    }
+    return frame, ""
+
+
+def _serialize_typed_arm_state_frame(
+    *,
+    seq: int,
+    q: Sequence[float],
+    dq: Sequence[float],
+    tau: Sequence[float],
+    q_target: Sequence[float],
+    tracking_error: Sequence[float],
+    backend_age_us: int,
+    transport_age_us: int,
+    target_seq_applied: int,
+    state_from_backend: bool,
+) -> bytes:
+    now_ns = _monotonic_ns()
+    validity_flags = _VALIDITY_PAYLOAD_VALID
+    if state_from_backend:
+        validity_flags |= _VALIDITY_FROM_BACKEND
+    else:
+        validity_flags |= _VALIDITY_SHADOW_STATE
+    payload = _ARM_STATE_PAYLOAD.pack(
+        6,
+        1 if state_from_backend else 0,
+        *[float(q[i]) if i < len(q) else 0.0 for i in range(6)],
+        *[float(dq[i]) if i < len(dq) else 0.0 for i in range(6)],
+        *[float(tau[i]) if i < len(tau) else 0.0 for i in range(6)],
+        *[float(q_target[i]) if i < len(q_target) else 0.0 for i in range(6)],
+        *[float(tracking_error[i]) if i < len(tracking_error) else 0.0 for i in range(6)],
+        int(max(0, backend_age_us)),
+        int(max(0, transport_age_us)),
+        int(target_seq_applied),
+    )
+    header = _serialize_frame_header(
+        _FRAME_TYPE_ARM_STATE,
+        seq=seq,
+        source_monotonic_ns=now_ns,
+        publish_monotonic_ns=now_ns,
+        validity_flags=validity_flags,
+        payload_bytes=_ARM_STATE_PAYLOAD.size,
+    )
+    return header + payload
 
 
 def _serialize_state_packet(
@@ -509,6 +706,7 @@ class ArxX5BridgeNode(Node):
     def __init__(self):
         super().__init__("arx_x5_bridge")
 
+        self.declare_parameter("deploy_manifest_path", _default_manifest_path())
         self.declare_parameter("model", "X5")
         self.declare_parameter("interface_name", "can0")
         self.declare_parameter("urdf_path", "")
@@ -545,28 +743,83 @@ class ArxX5BridgeNode(Node):
         self.declare_parameter("arm_topic_ipc_enabled", False)
         self.declare_parameter("arm_topic_ipc_host", "127.0.0.1")
         self.declare_parameter("arm_topic_ipc_port", 45673)
+        self.declare_parameter("bridge_transport", "ipc")
+
+        self.deploy_manifest_path = str(self.get_parameter("deploy_manifest_path").value)
+        try:
+            self.deploy_manifest = _load_manifest(self.deploy_manifest_path)
+        except Exception as ex:  # pylint: disable=broad-except
+            self.deploy_manifest = {}
+            self.get_logger().warning(f"Failed to load deploy manifest {self.deploy_manifest_path}: {ex}")
+
+        manifest_robot = _manifest_section(self.deploy_manifest, "robot")
+        manifest_body = _manifest_section(self.deploy_manifest, "body_adapter")
+        manifest_arm = _manifest_section(self.deploy_manifest, "arm_adapter")
+        manifest_coordinator = _manifest_section(self.deploy_manifest, "coordinator")
+        manifest_supervisor = _manifest_section(self.deploy_manifest, "supervisor")
+        manifest_ops = _manifest_section(self.deploy_manifest, "ops")
 
         self.model = str(self.get_parameter("model").value)
         self.interface_name = str(self.get_parameter("interface_name").value)
         self.urdf_path = str(self.get_parameter("urdf_path").value)
-        self.joint_count = int(self.get_parameter("joint_count").value)
-        self.cmd_topic = str(self.get_parameter("cmd_topic").value)
-        self.state_topic = str(self.get_parameter("state_topic").value)
-        self.arm_joint_command_topic = str(self.get_parameter("arm_joint_command_topic").value)
-        self.publish_rate_hz = float(self.get_parameter("publish_rate_hz").value)
+        self.joint_count = int(_keep_override_or_manifest(
+            int(self.get_parameter("joint_count").value),
+            6,
+            int(manifest_robot.get("arm_joint_count", 6)),
+        ))
+        self.cmd_topic = str(_keep_override_or_manifest(
+            str(self.get_parameter("cmd_topic").value),
+            "/arx_x5/joint_cmd",
+            str(manifest_arm.get("arm_cmd_topic", "/arx_x5/joint_cmd")),
+        ))
+        self.state_topic = str(_keep_override_or_manifest(
+            str(self.get_parameter("state_topic").value),
+            "/arx_x5/joint_state",
+            str(manifest_arm.get("arm_state_topic", "/arx_x5/joint_state")),
+        ))
+        self.arm_joint_command_topic = str(_keep_override_or_manifest(
+            str(self.get_parameter("arm_joint_command_topic").value),
+            "/arm_joint_pos_cmd",
+            str(manifest_arm.get("arm_joint_command_topic", "/arm_joint_pos_cmd")),
+        ))
+        self.publish_rate_hz = float(_keep_override_or_manifest(
+            float(self.get_parameter("publish_rate_hz").value),
+            200.0,
+            float(manifest_arm.get("arm_target_rate_hz", 200)),
+        ))
         self.command_speed = float(self.get_parameter("command_speed").value)
-        self.cmd_timeout_sec = float(self.get_parameter("cmd_timeout_sec").value)
+        self.cmd_timeout_sec = float(_keep_override_or_manifest(
+            float(self.get_parameter("cmd_timeout_sec").value),
+            0.5,
+            float(manifest_coordinator.get("arm_command_expire_ms", 15)) / 1000.0,
+        ))
         self.accept_commands = bool(self.get_parameter("accept_commands").value)
         self.dry_run = bool(self.get_parameter("dry_run").value)
         self.sdk_root = str(self.get_parameter("sdk_root").value) or os.environ.get("ARX5_SDK_ROOT", "")
         self.sdk_python_path = str(self.get_parameter("sdk_python_path").value)
         self.sdk_lib_path = str(self.get_parameter("sdk_lib_path").value)
         self.require_sdk = bool(self.get_parameter("require_sdk").value)
-        self.require_initial_state = bool(self.get_parameter("require_initial_state").value)
+        self.require_initial_state = bool(_keep_override_or_manifest(
+            bool(self.get_parameter("require_initial_state").value),
+            False,
+            bool(manifest_arm.get("require_live_state", False)),
+        ))
         self.probe_backend_before_init = bool(self.get_parameter("probe_backend_before_init").value)
-        self.probe_timeout_sec = max(0.5, float(self.get_parameter("probe_timeout_sec").value))
-        self.enable_background_send_recv = bool(self.get_parameter("enable_background_send_recv").value)
-        self.controller_dt = float(self.get_parameter("controller_dt").value)
+        self.probe_timeout_sec = max(0.5, float(_keep_override_or_manifest(
+            float(self.get_parameter("probe_timeout_sec").value),
+            5.0,
+            float(manifest_supervisor.get("probe_window_sec", 2.0)),
+        )))
+        self.enable_background_send_recv = bool(_keep_override_or_manifest(
+            bool(self.get_parameter("enable_background_send_recv").value),
+            True,
+            bool(manifest_arm.get("background_send_recv", True)),
+        ))
+        self.controller_dt = float(_keep_override_or_manifest(
+            float(self.get_parameter("controller_dt").value),
+            0.002,
+            float(manifest_arm.get("controller_dt", 0.002)),
+        ))
         self.init_to_home = bool(self.get_parameter("init_to_home").value)
         default_lower, default_upper = _default_joint_pos_limits(self.model, self.joint_count)
         self.joint_pos_min = _load_limit_list(self.get_parameter("joint_pos_min").value, default_lower, self.joint_count)
@@ -575,12 +828,17 @@ class ArxX5BridgeNode(Node):
         self.kp_abs_limit = max(0.0, float(self.get_parameter("kp_abs_limit").value))
         self.kd_abs_limit = max(0.0, float(self.get_parameter("kd_abs_limit").value))
         self.tau_abs_limit = max(0.0, float(self.get_parameter("tau_abs_limit").value))
-        self.ipc_enabled = bool(self.get_parameter("ipc_enabled").value)
         self.ipc_bind_host = str(self.get_parameter("ipc_bind_host").value)
         self.ipc_cmd_port = int(self.get_parameter("ipc_cmd_port").value)
         self.ipc_state_host = str(self.get_parameter("ipc_state_host").value)
         self.ipc_state_port = int(self.get_parameter("ipc_state_port").value)
+        self.bridge_transport = str(self.get_parameter("bridge_transport").value).strip().lower() or "ipc"
+        self.ipc_enabled = bool(self.get_parameter("ipc_enabled").value)
+        if not self.ipc_enabled and self.bridge_transport == "ipc":
+            self.ipc_enabled = True
         self.arm_topic_ipc_enabled = bool(self.get_parameter("arm_topic_ipc_enabled").value)
+        if not self.arm_topic_ipc_enabled and self.bridge_transport == "ipc":
+            self.arm_topic_ipc_enabled = True
         self.arm_topic_ipc_host = str(self.get_parameter("arm_topic_ipc_host").value)
         self.arm_topic_ipc_port = int(self.get_parameter("arm_topic_ipc_port").value)
 
@@ -589,9 +847,14 @@ class ArxX5BridgeNode(Node):
         self.last_q = [0.0] * self.joint_count
         self.last_dq = [0.0] * self.joint_count
         self.last_tau = [0.0] * self.joint_count
+        self.target_q = [0.0] * self.joint_count
         self.last_kp = [0.0] * self.joint_count
         self.last_kd = [0.0] * self.joint_count
         self.last_cmd_stamp = time.monotonic()
+        self.last_backend_state_stamp = time.monotonic()
+        self.last_applied_command_seq = 0
+        self._arm_state_seq = 0
+        self._arm_topic_seq = 0
         self.recv_cmd = False
         self.ignore_cmd_warned = False
         self.last_stale_warn_stamp = 0.0
@@ -651,6 +914,7 @@ class ArxX5BridgeNode(Node):
                     self.last_q = [0.0] * self.joint_count
                     self.last_dq = [0.0] * self.joint_count
                     self.last_tau = [0.0] * self.joint_count
+                    self.target_q = [0.0] * self.joint_count
                     self.last_kp = [0.0] * self.joint_count
                     self.last_kd = [0.0] * self.joint_count
 
@@ -678,8 +942,22 @@ class ArxX5BridgeNode(Node):
             f"ARX bridge started: model={self.model}, iface={self.interface_name}, "
             f"cmd_topic={self.cmd_topic}, state_topic={self.state_topic}, N={self.joint_count}, "
             f"accept_commands={self.accept_commands}, ipc_enabled={self.ipc_enabled}, "
-            f"arm_topic_ipc_enabled={self.arm_topic_ipc_enabled}"
+            f"arm_topic_ipc_enabled={self.arm_topic_ipc_enabled}, bridge_transport={self.bridge_transport}"
         )
+        if self.deploy_manifest:
+            self.get_logger().info(
+                "Deploy manifest loaded: "
+                f"path={self.deploy_manifest_path}, "
+                f"policy_id={self.deploy_manifest.get('meta', {}).get('policy_id', '')}, "
+                f"ros2_enabled={manifest_ops.get('ros2_enabled', True)}, "
+                f"mirror_only={manifest_ops.get('ros2_mirror_only', True)}, "
+                f"body_interface={manifest_body.get('interface', 'unitree_sdk2')}, "
+                f"body_network_interface={manifest_body.get('network_interface', 'eth0')}, "
+                f"body_lowstate_timeout_ms={manifest_body.get('lowstate_timeout_ms', 50)}, "
+                f"background_send_recv={manifest_arm.get('background_send_recv', True)}, "
+                f"controller_dt={manifest_arm.get('controller_dt', 0.002)}, "
+                f"probe_window_sec={manifest_supervisor.get('probe_window_sec', 2.0)}"
+            )
         if not self.accept_commands:
             self.get_logger().warning(
                 "ARX bridge is in read-only mode. Incoming /arx_x5/joint_cmd will be ignored until "
@@ -888,6 +1166,7 @@ class ArxX5BridgeNode(Node):
         kd: Sequence[float],
         tau: Sequence[float],
         source: str,
+        command_seq: int = 0,
     ) -> None:
         if not self.accept_commands:
             if not self.ignore_cmd_warned:
@@ -904,7 +1183,10 @@ class ArxX5BridgeNode(Node):
         self.last_kp = kp
         self.last_kd = kd
         self.last_tau = tau
+        self.target_q = list(q)
         self.last_cmd_stamp = time.monotonic()
+        if command_seq > 0:
+            self.last_applied_command_seq = int(command_seq)
         self.recv_cmd = True
 
     def _drain_ipc_commands(self) -> None:
@@ -920,27 +1202,63 @@ class ArxX5BridgeNode(Node):
                 self.get_logger().warning(f"Arm bridge IPC recv failed: {ex}")
                 break
 
+            typed_frame, typed_error = _parse_typed_arm_command_frame(data)
+            if typed_frame is not None:
+                if typed_frame["joint_count"] != self.joint_count:
+                    self._warn_invalid_command(
+                        f"Ignore arm bridge IPC typed cmd: expect {self.joint_count} joints, got {typed_frame['joint_count']}."
+                    )
+                    continue
+                if typed_frame["command_expire_ns"] and _monotonic_ns() >= typed_frame["command_expire_ns"]:
+                    self._warn_invalid_command("Ignore arm bridge IPC typed cmd: command expired.")
+                    continue
+                self._apply_command(
+                    typed_frame["q"],
+                    typed_frame["dq"],
+                    typed_frame["kp"],
+                    typed_frame["kd"],
+                    typed_frame["tau"],
+                    "arm bridge IPC typed frame",
+                    command_seq=int(typed_frame["header"]["seq"]),
+                )
+                continue
+
             q, dq, kp, kd, tau, error = _parse_command_packet(data)
             if q is None or dq is None or kp is None or kd is None or tau is None:
-                self._warn_invalid_command(f"Ignore arm bridge IPC cmd: {error}.")
+                self._warn_invalid_command(
+                    f"Ignore arm bridge IPC cmd: {typed_error}; legacy_fallback={error}."
+                )
                 continue
             if len(q) != self.joint_count:
                 self._warn_invalid_command(
                     f"Ignore arm bridge IPC cmd: expect {self.joint_count} joints, got {len(q)}."
                 )
                 continue
-            self._apply_command(q, dq, kp, kd, tau, "arm bridge IPC")
+            self._apply_command(q, dq, kp, kd, tau, "arm bridge IPC legacy packet")
 
     def _send_ipc_state(self) -> None:
         if not self.ipc_enabled or self._ipc_state_socket is None:
             return
 
-        payload = _serialize_state_packet(
-            self.joint_count,
-            self.last_q,
-            self.last_dq,
-            self.last_tau,
-            self.state_from_backend,
+        self._arm_state_seq += 1
+        backend_age_us = 0
+        if self.last_backend_state_stamp:
+            backend_age_us = int(max(0.0, (time.monotonic() - self.last_backend_state_stamp) * 1e6))
+        tracking_error = [
+            float(self.target_q[i] if i < len(self.target_q) else 0.0) - float(self.last_q[i])
+            for i in range(self.joint_count)
+        ]
+        payload = _serialize_typed_arm_state_frame(
+            seq=self._arm_state_seq,
+            q=self.last_q,
+            dq=self.last_dq,
+            tau=self.last_tau,
+            q_target=self.target_q,
+            tracking_error=tracking_error,
+            backend_age_us=0 if self.state_from_backend else backend_age_us,
+            transport_age_us=0,
+            target_seq_applied=self.last_applied_command_seq,
+            state_from_backend=self.state_from_backend,
         )
         try:
             self._ipc_state_socket.sendto(payload, (self.ipc_state_host, self.ipc_state_port))
@@ -977,7 +1295,17 @@ class ArxX5BridgeNode(Node):
                 f"Ignore {self.arm_joint_command_topic}: expect {n} values, got {len(msg.data)}."
             )
             return
-        payload = _serialize_pose_packet(n, msg.data[:n])
+        self._arm_topic_seq += 1
+        expire_ns = _monotonic_ns() + int(max(self.cmd_timeout_sec, 0.0) * 1e9)
+        payload = _serialize_typed_arm_command_frame(
+            seq=self._arm_topic_seq,
+            q=msg.data[:n],
+            dq=[0.0] * n,
+            kp=[0.0] * n,
+            kd=[0.0] * n,
+            tau=[0.0] * n,
+            command_expire_ns=expire_ns,
+        )
         try:
             self._arm_topic_ipc_socket.sendto(
                 payload,
@@ -1021,6 +1349,7 @@ class ArxX5BridgeNode(Node):
             if q is not None and len(q) == self.joint_count:
                 self.last_q = q
                 state_from_backend = True
+                self.last_backend_state_stamp = time.monotonic()
             if dq is not None and len(dq) == self.joint_count:
                 self.last_dq = dq
             if tau is not None and len(tau) == self.joint_count:

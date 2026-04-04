@@ -1,4 +1,4 @@
- */
+// Test file
 
 /**
  * @file test_vector_math.cpp

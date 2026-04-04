@@ -97,12 +97,20 @@ void RL_Real_Go2X5::PollArmCommandIpc()
         }
 
         std::vector<uint8_t> bytes(buffer.begin(), buffer.begin() + bytes_read);
+        rl_sar::protocol::ArmCommandFrame typed_frame;
+        std::string typed_error;
+        if (rl_sar::protocol::ParseArmCommandFrame(bytes, typed_frame, &typed_error))
+        {
+            this->HandleArmJointCommandFrame(typed_frame, "Arm joint command IPC typed frame");
+            continue;
+        }
+
         Go2X5IPC::ArmPosePacket packet;
         std::string error;
         if (!Go2X5IPC::ParsePosePacket(bytes, packet, &error))
         {
             std::cout << LOGGER::WARNING << "Ignore arm joint command IPC packet: "
-                      << error << std::endl;
+                      << typed_error << "; legacy_fallback=" << error << std::endl;
             continue;
         }
         if (packet.joint_count != static_cast<uint16_t>(this->arm_command_size))
@@ -231,11 +239,20 @@ void RL_Real_Go2X5::PollArmBridgeIpcState()
         }
 
         std::vector<uint8_t> bytes(buffer.begin(), buffer.begin() + bytes_read);
+        rl_sar::protocol::ArmStateFrame typed_frame;
+        std::string typed_error;
+        if (rl_sar::protocol::ParseArmStateFrame(bytes, typed_frame, &typed_error))
+        {
+            this->HandleArmBridgeStateFrame(typed_frame, "Arm bridge IPC state typed frame");
+            continue;
+        }
+
         Go2X5IPC::ArmStatePacket packet;
         std::string error;
         if (!Go2X5IPC::ParseStatePacket(bytes, packet, &error))
         {
-            std::cout << LOGGER::WARNING << "Ignore arm bridge IPC state packet: " << error << std::endl;
+            std::cout << LOGGER::WARNING << "Ignore arm bridge IPC state packet: "
+                      << typed_error << "; legacy_fallback=" << error << std::endl;
             continue;
         }
         if (packet.joint_count != static_cast<uint16_t>(this->arm_joint_count))

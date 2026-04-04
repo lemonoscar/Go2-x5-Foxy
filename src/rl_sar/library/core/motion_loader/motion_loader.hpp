@@ -1,5 +1,3 @@
- */
-
 #ifndef MOTION_LOADER_HPP
 #define MOTION_LOADER_HPP
 

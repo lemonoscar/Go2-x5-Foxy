@@ -1,5 +1,3 @@
- */
-
 #ifndef GO2_X5_FSM_HPP
 #define GO2_X5_FSM_HPP
 

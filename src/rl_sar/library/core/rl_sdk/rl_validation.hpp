@@ -1,5 +1,3 @@
- */
-
 #ifndef RL_VALIDATION_HPP
 #define RL_VALIDATION_HPP
 
