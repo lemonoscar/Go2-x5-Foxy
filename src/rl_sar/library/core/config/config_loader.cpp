@@ -1,4 +1,4 @@
-#include "config_loader.hpp"
+#include "library/core/config/config_loader.hpp"
 
 #include <yaml-cpp/yaml.h>
 #include <algorithm>
