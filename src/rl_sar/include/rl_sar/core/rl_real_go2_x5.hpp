@@ -21,7 +21,7 @@
 #include "rl_sar/runtime/supervisor/go2_x5_supervisor.hpp"
 #include "deploy_manifest_runtime.hpp"
 #include "fsm_go2_x5.hpp"
-#include "library/core/config/config_loader.hpp"
+#include "rl_sar/library/core/config/config_loader.hpp"
 
 #include <unitree/robot/channel/channel_publisher.hpp>
 #include <unitree/robot/channel/channel_subscriber.hpp>
