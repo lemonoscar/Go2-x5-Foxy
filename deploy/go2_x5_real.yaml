@@ -1,0 +1,82 @@
+meta:
+  manifest_version: 1
+  protocol_version: 1
+  policy_id: "go2_x5_dog_only_v1"
+  generated_at: "2026-04-01T00:00:00Z"
+
+robot:
+  name: "go2_x5"
+  leg_joint_count: 12
+  arm_joint_count: 6
+  gripper_enabled: false
+  joint_mapping: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+  joint_lower_limits: [-1.0472, -1.5708, -2.7227,
+                       -1.0472, -1.5708, -2.7227,
+                       -1.0472, -0.5236, -2.7227,
+                       -1.0472, -0.5236, -2.7227,
+                       -3.14, -0.05, -0.1,
+                       -1.6, -1.57, -2.0]
+  joint_upper_limits: [1.0472, 3.4907, -0.83776,
+                       1.0472, 3.4907, -0.83776,
+                       1.0472, 4.5379, -0.83776,
+                       1.0472, 4.5379, -0.83776,
+                       2.618, 3.50, 3.20,
+                       1.55, 1.57, 2.0]
+  joint_velocity_limits: [30.1, 30.1, 15.7,
+                           30.1, 30.1, 15.7,
+                           30.1, 30.1, 15.7,
+                           30.1, 30.1, 15.7,
+                           3.0, 3.0, 3.0,
+                           3.0, 3.0, 3.0]
+
+policy:
+  mode: "dog_only"
+  action_dim: 12
+  observation_dim: 260
+  policy_rate_hz: 50
+  model_path: "policy.pt"
+  enable_arm_tracking_error_obs: false
+  enable_arm_command_delta_obs: false
+
+body_adapter:
+  interface: "unitree_sdk2"
+  network_interface: "eth0"
+  command_rate_hz: 200
+  require_lowstate: true
+  lowstate_timeout_ms: 50
+
+arm_adapter:
+  interface: "arx5_sdk"
+  can_interface: "can0"
+  arm_cmd_topic: "/arx_x5/joint_cmd"
+  arm_state_topic: "/arx_x5/joint_state"
+  arm_joint_command_topic: "/arm_joint_pos_cmd"
+  arm_target_rate_hz: 200
+  servo_rate_hz: 500
+  background_send_recv: true
+  controller_dt: 0.002
+  require_live_state: true
+  arm_state_timeout_ms: 50
+  arm_tracking_error_limit: 0.25
+
+coordinator:
+  rate_hz: 200
+  body_command_expire_ms: 15
+  arm_command_expire_ms: 15
+  zero_cmd_xy_drift_limit: 0.02
+  zero_cmd_yaw_drift_limit: 0.05
+  enable_drift_anchor: true
+
+supervisor:
+  probe_window_sec: 2.0
+  degraded_timeout_sec: 1.0
+  policy_timeout_ms: 100
+  fault_latched_requires_manual_reset: true
+
+ops:
+  ros2_enabled: true
+  ros2_mirror_only: true
+  bridge_rmw_implementation: "rmw_cyclonedds_cpp"
+  go2_rmw_implementation: "rmw_fastrtps_cpp"
+  bag_enabled: true
+  diagnostics_rate_hz: 50

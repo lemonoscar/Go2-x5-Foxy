@@ -1,5 +1,3 @@
- */
-
 #ifndef RL_SAR_CONFIG_LOADER_HPP
 #define RL_SAR_CONFIG_LOADER_HPP
 

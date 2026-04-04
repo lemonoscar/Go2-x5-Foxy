@@ -1,5 +1,3 @@
- */
-
 #include "config_loader.hpp"
 
 #include <yaml-cpp/yaml.h>
