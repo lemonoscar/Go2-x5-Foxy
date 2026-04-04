@@ -950,7 +950,7 @@ void RL_Real_Go2X5::InitializeArmChannelConfig()
 
     std::cout << LOGGER::INFO << "Arm control mode: " << this->arm_control_mode
               << " (start=" << this->arm_joint_start_index
-              << ", count=" << this->arm_joint_count << ")" << std::endl;
+              << ", count=" << static_cast<int>(this->arm_joint_count) << ")" << std::endl;
     if (this->arm_split_control_enabled)
     {
         std::cout << LOGGER::INFO << "Arm bridge guard: require_state="
@@ -1084,7 +1084,7 @@ bool RL_Real_Go2X5::ClipWholeBodyCommand(RobotCommand<float> *command, const cha
         if (should_log)
         {
             this->whole_body_clip_warn_stamp = now;
-            std::cout << LOGGER::WARNING << context << " clipped " << clipped_count
+            std::cout << LOGGER::WARNING << context << " clipped " << static_cast<int>(clipped_count)
                       << " joint command(s), first=" << first_joint << std::endl;
         }
         return true;
@@ -1602,7 +1602,7 @@ std::vector<float> RL_Real_Go2X5::Forward()
     {
         std::cout << LOGGER::ERROR
                   << "Policy action dimension mismatch: expect " << expected_action_dim
-                  << ", got " << actions.size()
+                  << ", got " << static_cast<size_t>(actions.size())
                   << ". Use zero action fallback." << std::endl;
         actions.assign(expected_action_dim, 0.0f);
         policy_health_bad = true;

@@ -71,7 +71,7 @@ void RL_Real_Go2X5::ValidateJointMappingOrThrow(const char* stage) const
         }
         if (used[static_cast<size_t>(mapped)])
         {
-            std::cout << "[WARNING] Duplicate joint_mapping value " << mapped
+            std::cout << "[WARNING] Duplicate joint_mapping value " << static_cast<int>(mapped)
                       << " detected in " << stage << "." << std::endl;
         }
         used[static_cast<size_t>(mapped)] = true;

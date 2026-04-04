@@ -30,7 +30,7 @@ void RL_Real_Go2X5::HandleArmJointCommandData(const std::vector<float>& data, co
     {
         std::cout << LOGGER::WARNING
                   << "Ignore " << context << ": expect " << this->arm_command_size
-                  << " values, got " << data.size() << std::endl;
+                  << " values, got " << static_cast<size_t>(data.size()) << std::endl;
         return;
     }
 

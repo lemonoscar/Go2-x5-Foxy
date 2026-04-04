@@ -168,7 +168,8 @@ bool ValidateArmPoseTarget(const std::vector<float>& target,
     if (target.size() != static_cast<size_t>(safety_context.arm_joint_count))
     {
         std::cout << LOGGER::WARNING << context << " rejected: expect "
-                  << safety_context.arm_joint_count << " values, got " << target.size() << std::endl;
+                  << static_cast<int>(safety_context.arm_joint_count) << " values, got "
+                  << static_cast<size_t>(target.size()) << std::endl;
         return false;
     }
 
@@ -178,19 +179,19 @@ bool ValidateArmPoseTarget(const std::vector<float>& target,
         if (!std::isfinite(value))
         {
             std::cout << LOGGER::WARNING << context << " rejected: non-finite joint["
-                      << i << "]=" << value << std::endl;
+                      << static_cast<int>(i) << "]=" << value << std::endl;
             return false;
         }
         if (i < safety_context.arm_joint_lower_limits.size() && value < safety_context.arm_joint_lower_limits[i])
         {
-            std::cout << LOGGER::WARNING << context << " rejected: joint[" << i
+            std::cout << LOGGER::WARNING << context << " rejected: joint[" << static_cast<int>(i)
                       << "]=" << value << " below lower limit "
                       << safety_context.arm_joint_lower_limits[i] << std::endl;
             return false;
         }
         if (i < safety_context.arm_joint_upper_limits.size() && value > safety_context.arm_joint_upper_limits[i])
         {
-            std::cout << LOGGER::WARNING << context << " rejected: joint[" << i
+            std::cout << LOGGER::WARNING << context << " rejected: joint[" << static_cast<int>(i)
                       << "]=" << value << " above upper limit "
                       << safety_context.arm_joint_upper_limits[i] << std::endl;
             return false;
@@ -225,7 +226,7 @@ bool ValidateArmBridgeStateSample(const std::vector<float>& q,
         if (i < safety_context.arm_joint_lower_limits.size() &&
             q[i] < (safety_context.arm_joint_lower_limits[i] - kStateMargin))
         {
-            std::cout << LOGGER::WARNING << context << " rejected: joint[" << i
+            std::cout << LOGGER::WARNING << context << " rejected: joint[" << static_cast<int>(i)
                       << "]=" << q[i] << " below plausible state lower bound "
                       << (safety_context.arm_joint_lower_limits[i] - kStateMargin) << std::endl;
             return false;
@@ -233,7 +234,7 @@ bool ValidateArmBridgeStateSample(const std::vector<float>& q,
         if (i < safety_context.arm_joint_upper_limits.size() &&
             q[i] > (safety_context.arm_joint_upper_limits[i] + kStateMargin))
         {
-            std::cout << LOGGER::WARNING << context << " rejected: joint[" << i
+            std::cout << LOGGER::WARNING << context << " rejected: joint[" << static_cast<int>(i)
                       << "]=" << q[i] << " above plausible state upper bound "
                       << (safety_context.arm_joint_upper_limits[i] + kStateMargin) << std::endl;
             return false;

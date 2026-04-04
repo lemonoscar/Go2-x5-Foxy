@@ -225,7 +225,7 @@ void EventLogger::LogModeTransition(
 
     if (config_.flush_on_write)
     {
-        Flush();
+        FlushUnlocked();
     }
 }
 
@@ -272,7 +272,7 @@ void EventLogger::LogFault(
 
     if (config_.flush_on_write)
     {
-        Flush();
+        FlushUnlocked();
     }
 }
 
@@ -306,7 +306,7 @@ void EventLogger::LogEvent(const EventLogEntry& event)
 
     if (config_.flush_on_write)
     {
-        Flush();
+        FlushUnlocked();
     }
 }
 
@@ -408,7 +408,11 @@ size_t EventLogger::GetEventCount() const
 void EventLogger::Flush()
 {
     std::lock_guard<std::mutex> lock(mutex_);
+    FlushUnlocked();
+}
 
+void EventLogger::FlushUnlocked()
+{
     if (impl_->log_file.is_open())
     {
         impl_->log_file.flush();

@@ -116,7 +116,8 @@ void RL_Real_Go2X5::PollArmCommandIpc()
         if (packet.joint_count != static_cast<uint16_t>(this->arm_command_size))
         {
             std::cout << LOGGER::WARNING << "Ignore arm joint command IPC packet: expect "
-                      << this->arm_command_size << " joints, got " << packet.joint_count << std::endl;
+                      << static_cast<int>(this->arm_command_size) << " joints, got "
+                      << static_cast<int>(packet.joint_count) << std::endl;
             continue;
         }
         this->HandleArmJointCommandData(packet.q, "Arm joint command IPC");
@@ -258,7 +259,8 @@ void RL_Real_Go2X5::PollArmBridgeIpcState()
         if (packet.joint_count != static_cast<uint16_t>(this->arm_joint_count))
         {
             std::cout << LOGGER::WARNING << "Ignore arm bridge IPC state packet: expect "
-                      << this->arm_joint_count << " joints, got " << packet.joint_count << std::endl;
+                      << static_cast<int>(this->arm_joint_count) << " joints, got "
+                      << static_cast<int>(packet.joint_count) << std::endl;
             continue;
         }
         std::vector<float> data;
