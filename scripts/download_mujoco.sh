@@ -121,22 +121,41 @@ download_mujoco() {
     mkdir -p "$temp_dir"
     cd "$temp_dir"
 
-    # Download archive
+    # Download archive with retry logic for poor network conditions
     print_info "Downloading MuJoCo..."
-    if command -v wget &> /dev/null; then
-        wget -q --show-progress "$url" -O "$archive_name" || {
-            print_error "Download failed"
+    local max_retries=3
+    local retry_count=0
+    local download_success=false
+
+    while [ $retry_count -lt $max_retries ] && [ "$download_success" = false ]; do
+        if [ $retry_count -gt 0 ]; then
+            print_warning "Retry $retry_count/$max_retries..."
+        fi
+
+        if command -v wget &> /dev/null; then
+            # Use wget with resume capability and longer timeout
+            if wget --timeout=30 -T 600 -t 3 -c -q --show-progress "$url" -O "$archive_name"; then
+                download_success=true
+            else
+                retry_count=$((retry_count + 1))
+            fi
+        elif command -v curl &> /dev/null; then
+            # Use curl with resume capability and longer timeout
+            if curl -L --connect-timeout 30 --max-time 600 --retry 3 --retry-delay 5 \
+                    -C - --progress-bar "$url" -o "$archive_name"; then
+                download_success=true
+            else
+                retry_count=$((retry_count + 1))
+            fi
+        else
+            print_error "Neither wget nor curl is available"
             rm -rf "$temp_dir"
             exit 1
-        }
-    elif command -v curl &> /dev/null; then
-        curl -L --progress-bar "$url" -o "$archive_name" || {
-            print_error "Download failed"
-            rm -rf "$temp_dir"
-            exit 1
-        }
-    else
-        print_error "Neither wget nor curl is available"
+        fi
+    done
+
+    if [ "$download_success" = false ]; then
+        print_error "Download failed after $max_retries attempts"
         rm -rf "$temp_dir"
         exit 1
     fi

@@ -123,21 +123,41 @@ download_libtorch() {
     print_info "Platform: ${OS_TYPE} (${ARCH_TYPE})"
     print_info "URL: ${url}"
 
-    # Download
-    if command -v curl &> /dev/null; then
-        curl -L --progress-bar -o "${archive_path}" "${url}" || {
-            print_error "Download failed"
-            rm -f "${archive_path}"
+    # Download with retry logic for poor network conditions
+    local max_retries=3
+    local retry_count=0
+    local download_success=false
+
+    while [ $retry_count -lt $max_retries ] && [ "$download_success" = false ]; do
+        if [ $retry_count -gt 0 ]; then
+            print_warning "Retry $retry_count/$max_retries..."
+        fi
+
+        if command -v curl &> /dev/null; then
+            # Use curl with resume capability and longer timeout
+            if curl -L --connect-timeout 30 --max-time 600 --retry 3 --retry-delay 5 \
+                    -C - --progress-bar -o "${archive_path}" "${url}"; then
+                download_success=true
+            else
+                retry_count=$((retry_count + 1))
+            fi
+        elif command -v wget &> /dev/null; then
+            # Use wget with resume capability and longer timeout
+            if wget --timeout=30 -T 600 -t 3 -c --show-progress \
+                    -O "${archive_path}" "${url}"; then
+                download_success=true
+            else
+                retry_count=$((retry_count + 1))
+            fi
+        else
+            print_error "curl or wget is required to download files"
             exit 1
-        }
-    elif command -v wget &> /dev/null; then
-        wget --show-progress -O "${archive_path}" "${url}" || {
-            print_error "Download failed"
-            rm -f "${archive_path}"
-            exit 1
-        }
-    else
-        print_error "curl or wget is required to download files"
+        fi
+    done
+
+    if [ "$download_success" = false ]; then
+        print_error "Download failed after $max_retries attempts"
+        rm -f "${archive_path}"
         exit 1
     fi
 
@@ -221,21 +241,41 @@ download_onnxruntime() {
     print_info "Platform: ${OS_TYPE} (${ARCH_TYPE})"
     print_info "URL: ${url}"
 
-    # Download
-    if command -v curl &> /dev/null; then
-        curl -L --progress-bar -o "${archive_path}" "${url}" || {
-            print_error "Download failed"
-            rm -f "${archive_path}"
+    # Download with retry logic for poor network conditions
+    local max_retries=3
+    local retry_count=0
+    local download_success=false
+
+    while [ $retry_count -lt $max_retries ] && [ "$download_success" = false ]; do
+        if [ $retry_count -gt 0 ]; then
+            print_warning "Retry $retry_count/$max_retries..."
+        fi
+
+        if command -v curl &> /dev/null; then
+            # Use curl with resume capability and longer timeout
+            if curl -L --connect-timeout 30 --max-time 600 --retry 3 --retry-delay 5 \
+                    -C - --progress-bar -o "${archive_path}" "${url}"; then
+                download_success=true
+            else
+                retry_count=$((retry_count + 1))
+            fi
+        elif command -v wget &> /dev/null; then
+            # Use wget with resume capability and longer timeout
+            if wget --timeout=30 -T 600 -t 3 -c --show-progress \
+                    -O "${archive_path}" "${url}"; then
+                download_success=true
+            else
+                retry_count=$((retry_count + 1))
+            fi
+        else
+            print_error "curl or wget is required to download files"
             exit 1
-        }
-    elif command -v wget &> /dev/null; then
-        wget --show-progress -O "${archive_path}" "${url}" || {
-            print_error "Download failed"
-            rm -f "${archive_path}"
-            exit 1
-        }
-    else
-        print_error "curl or wget is required to download files"
+        fi
+    done
+
+    if [ "$download_success" = false ]; then
+        print_error "Download failed after $max_retries attempts"
+        rm -f "${archive_path}"
         exit 1
     fi
 
