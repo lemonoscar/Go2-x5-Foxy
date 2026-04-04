@@ -5,7 +5,7 @@
 #include <sstream>
 #include <string>
 
-#include "deploy_manifest_loader.hpp"
+#include "library/core/config/deploy_manifest_loader.hpp"
 
 namespace
 {

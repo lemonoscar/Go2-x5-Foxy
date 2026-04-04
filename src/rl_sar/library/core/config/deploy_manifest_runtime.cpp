@@ -1,4 +1,4 @@
-#include "deploy_manifest_runtime.hpp"
+#include "library/core/config/deploy_manifest_runtime.hpp"
 
 #include <utility>
 

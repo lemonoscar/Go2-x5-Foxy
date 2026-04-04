@@ -5,8 +5,8 @@
 
 #include <yaml-cpp/yaml.h>
 
-#include "deploy_manifest_loader.hpp"
-#include "deploy_manifest_runtime.hpp"
+#include "library/core/config/deploy_manifest_loader.hpp"
+#include "library/core/config/deploy_manifest_runtime.hpp"
 
 namespace
 {
