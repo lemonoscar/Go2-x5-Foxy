@@ -3,7 +3,7 @@
 #include "rl_sar/go2x5/arm/go2_x5_arm_output_guard.hpp"
 #include "rl_sar/go2x5/control/go2_x5_control_logic.hpp"
 #include "rl_sar/go2x5/safety/go2_x5_safety_guard.hpp"
-#include "deploy_manifest_runtime.hpp"
+#include "library/core/config/deploy_manifest_runtime.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cctype>
