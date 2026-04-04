@@ -319,9 +319,7 @@ include_directories(
     include/rl_sar/go2x5/safety
     include/rl_sar/go2x5/comm
     include/rl_sar/go2x5/state
-    include/rl_sar/diagnostics
-    include/rl_sar/logger
-    include/rl_sar/adapters
+    # Note: diagnostics, logger, adapters, protocol, runtime are not yet implemented
     library/core/matplotlibcpp
     library/core/observation_buffer
     library/core/rl_sdk
@@ -331,7 +329,6 @@ include_directories(
     library/core/motion_loader
     library/core/inference_runtime
     library/core/logger
-    library/core/config
     fsm_robot
 )
 
@@ -387,44 +384,34 @@ if(NOT USE_CMAKE)
     endif()
 endif()
 
-# library for event logger
-add_library(event_logger src/rl_sar/logger/event_logger.cpp)
-target_link_libraries(event_logger PUBLIC Threads::Threads)
-if(NOT USE_CMAKE)
-    if($ENV{ROS_DISTRO} MATCHES "foxy")
-        install(TARGETS event_logger DESTINATION lib/${PROJECT_NAME})
-    endif()
-endif()
+# library for unitree adapter (isolates DDS from main logic) - NOT IMPLEMENTED YET
+# if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
+#     add_library(unitree_adapter src/rl_sar/adapters/unitree/unitree_adapter.cpp)
+#     target_include_directories(unitree_adapter BEFORE PRIVATE
+#         ${UNITREE_SDK2_THIRDPARTY_INCLUDE}
+#         ${UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE}
+#     )
+#     target_link_libraries(unitree_adapter
+#         unitree_sdk2
+#     )
+#     set_target_properties(unitree_adapter PROPERTIES
+#         INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${UNITREE_SDK2_ROOT}/thirdparty/lib/${ARCH_DIR}"
+#     )
+#     if(NOT USE_CMAKE)
+#         if($ENV{ROS_DISTRO} MATCHES "foxy")
+#             install(TARGETS unitree_adapter DESTINATION lib/${PROJECT_NAME})
+#         endif()
+#     endif()
+# endif()
 
-# library for unitree adapter (isolates DDS from main logic)
-if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
-    add_library(unitree_adapter src/rl_sar/adapters/unitree/unitree_adapter.cpp)
-    target_include_directories(unitree_adapter BEFORE PRIVATE
-        ${UNITREE_SDK2_THIRDPARTY_INCLUDE}
-        ${UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE}
-    )
-    target_link_libraries(unitree_adapter
-        unitree_sdk2
-    )
-    # Add unitree_sdk2 library path to RPATH
-    set_target_properties(unitree_adapter PROPERTIES
-        INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${UNITREE_SDK2_ROOT}/thirdparty/lib/${ARCH_DIR}"
-    )
-    if(NOT USE_CMAKE)
-        if($ENV{ROS_DISTRO} MATCHES "foxy")
-            install(TARGETS unitree_adapter DESTINATION lib/${PROJECT_NAME})
-        endif()
-    endif()
-endif()
-
-# library for arx adapter (converges ARX SDK integration)
-add_library(arx_adapter src/rl_sar/adapters/arx/arx_adapter.cpp)
-target_link_libraries(arx_adapter PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
-if(NOT USE_CMAKE)
-    if($ENV{ROS_DISTRO} MATCHES "foxy")
-        install(TARGETS arx_adapter DESTINATION lib/${PROJECT_NAME})
-    endif()
-endif()
+# library for arx adapter (converges ARX SDK integration) - NOT IMPLEMENTED YET
+# add_library(arx_adapter src/rl_sar/adapters/arx/arx_adapter.cpp)
+# target_link_libraries(arx_adapter PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
+# if(NOT USE_CMAKE)
+#     if($ENV{ROS_DISTRO} MATCHES "foxy")
+#         install(TARGETS arx_adapter DESTINATION lib/${PROJECT_NAME})
+#     endif()
+# endif()
 
 # executable for rl sim
 if(NOT USE_CMAKE)
@@ -493,16 +480,7 @@ if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
         src/rl_sar/go2x5/state/go2_x5_state_io.cpp
         src/rl_sar/go2x5/state/go2_x5_state_management.cpp
         src/rl_sar/go2x5/state/go2_x5_utility.cpp
-        # Runtime
-        src/rl_sar/protocol/go2_x5_protocol.cpp
-        src/rl_sar/runtime/supervisor/go2_x5_supervisor.cpp
-        # Diagnostics
-        src/rl_sar/diagnostics/diagnostics_publisher.cpp
-        src/rl_sar/diagnostics/drift_recorder.cpp
-        # Config
-        library/core/config/config_loader.cpp
-        library/core/config/deploy_manifest_loader.cpp
-        library/core/config/deploy_manifest_runtime.cpp
+        # Note: protocol, runtime/supervisor, diagnostics are not yet implemented
     )
     target_include_directories(rl_real_go2_x5 BEFORE PRIVATE
         ${UNITREE_SDK2_THIRDPARTY_INCLUDE}
@@ -512,8 +490,7 @@ if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
         unitree_sdk2
         rl_sdk
         observation_buffer
-        event_logger
-            ${YAML_CPP_LIBRARIES}
+        ${YAML_CPP_LIBRARIES}
     )
     # Add unitree_sdk2 library path to RPATH
     set_target_properties(rl_real_go2_x5 PROPERTIES
