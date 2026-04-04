@@ -2,7 +2,7 @@
 #ifndef GO2_X5_CONFIG_HPP
 #define GO2_X5_CONFIG_HPP
 
-#include "rl_sar/library/core/config/config_loader.hpp"
+#include "library/core/config/config_loader.hpp"
 #include <string>
 #include <vector>
 
