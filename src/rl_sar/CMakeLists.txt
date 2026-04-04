@@ -507,7 +507,7 @@ if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
     target_include_directories(rl_real_go2_x5 BEFORE PRIVATE
         ${UNITREE_SDK2_THIRDPARTY_INCLUDE}
         ${UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/library/core
+        ${CMAKE_CURRENT_SOURCE_DIR}
     )
     target_link_libraries(rl_real_go2_x5
         unitree_sdk2
