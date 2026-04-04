@@ -184,7 +184,7 @@ void RL_Real_Go2X5::HandleArmBridgeStateData(
     {
         std::cout << LOGGER::INFO << "Arm bridge state stream detected: transport="
                   << (this->UseArmBridgeIpc() ? "ipc" : "ros")
-                  << ", dof=" << this->arm_joint_count << std::endl;
+                  << ", dof=" << static_cast<int>(this->arm_joint_count) << std::endl;
     }
     else if (result.warn_shadow_only)
     {
