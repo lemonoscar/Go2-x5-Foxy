@@ -240,7 +240,7 @@ private:
     // Cached state data (for safe cross-thread access)
     protocol::BodyStateFrame latest_state_;
     std::chrono::steady_clock::time_point state_stamp_;
-    std::mutex state_mutex_;
+    mutable std::mutex state_mutex_;
 
     // LowCmd_ buffer for DDS writing
     std::unique_ptr<unitree_go::msg::dds_::LowCmd_> lowcmd_buffer_;

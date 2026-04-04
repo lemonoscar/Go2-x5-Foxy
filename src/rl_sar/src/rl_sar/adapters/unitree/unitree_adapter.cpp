@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
