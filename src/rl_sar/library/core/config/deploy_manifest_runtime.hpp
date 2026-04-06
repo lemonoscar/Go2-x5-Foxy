@@ -61,15 +61,15 @@ public:
 
     explicit DeployManifestRuntime(std::string manifest_path = kDefaultManifestPath);
 
-    ValidationResult Load();
-    ValidationResult LoadFromFile(const std::string& manifest_path);
-    ValidationResult LoadFromNode(const YAML::Node& node);
+    DeployManifestValidationResult Load();
+    DeployManifestValidationResult LoadFromFile(const std::string& manifest_path);
+    DeployManifestValidationResult LoadFromNode(const YAML::Node& node);
 
     bool HasManifest() const;
     const std::string& ManifestPath() const;
     const DeployManifest& Manifest() const;
     const DeployManifestLoader& Loader() const;
-    ValidationResult Validate() const;
+    DeployManifestValidationResult Validate() const;
 
     std::string ManifestHash() const;
     std::uint64_t PolicyIdHash() const;

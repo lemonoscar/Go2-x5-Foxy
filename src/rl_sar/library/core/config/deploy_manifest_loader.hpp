@@ -33,8 +33,6 @@ struct DeployManifestValidationResult
     }
 };
 
-using ValidationResult = DeployManifestValidationResult;
-
 struct DeployManifestMeta
 {
     int manifest_version = 1;
@@ -138,65 +136,65 @@ public:
 
     explicit DeployManifestLoader(std::string manifest_path = kDefaultManifestPath);
 
-    ValidationResult LoadDefaultManifest();
-    ValidationResult LoadFromFile(const std::string& manifest_path);
-    ValidationResult LoadFromNode(const YAML::Node& node);
+    DeployManifestValidationResult LoadDefaultManifest();
+    DeployManifestValidationResult LoadFromFile(const std::string& manifest_path);
+    DeployManifestValidationResult LoadFromNode(const YAML::Node& node);
 
     bool HasManifest() const;
     const std::string& ManifestPath() const;
     const DeployManifest& Manifest() const;
-    ValidationResult Validate() const;
+    DeployManifestValidationResult Validate() const;
     std::string ManifestDump() const;
     std::string ManifestHash() const;
 
 private:
-    static ValidationResult ValidateNode(const YAML::Node& node);
-    static ValidationResult ValidateManifest(const DeployManifest& manifest);
+    static DeployManifestValidationResult ValidateNode(const YAML::Node& node);
+    static DeployManifestValidationResult ValidateManifest(const DeployManifest& manifest);
     static DeployManifest ParseManifest(const YAML::Node& node);
-    static void RequireMap(const YAML::Node& node, const char* path, ValidationResult* result);
+    static void RequireMap(const YAML::Node& node, const char* path, DeployManifestValidationResult* result);
     static void RequireAllowedKeys(
         const YAML::Node& node,
         const std::vector<std::string>& allowed_keys,
         const char* path,
-        ValidationResult* result);
+        DeployManifestValidationResult* result);
     static void RequireScalarString(
         const YAML::Node& node,
         const char* key,
         const char* path,
         std::string* out,
-        ValidationResult* result);
+        DeployManifestValidationResult* result);
     static void RequireScalarInt(
         const YAML::Node& node,
         const char* key,
         const char* path,
         int* out,
-        ValidationResult* result);
+        DeployManifestValidationResult* result);
     static void RequireScalarDouble(
         const YAML::Node& node,
         const char* key,
         const char* path,
         double* out,
-        ValidationResult* result);
+        DeployManifestValidationResult* result);
     static void RequireScalarBool(
         const YAML::Node& node,
         const char* key,
         const char* path,
         bool* out,
-        ValidationResult* result);
+        DeployManifestValidationResult* result);
     static void RequireIntVector(
         const YAML::Node& node,
         const char* key,
         size_t expected_size,
         const char* path,
         std::vector<int>* out,
-        ValidationResult* result);
+        DeployManifestValidationResult* result);
     static void RequireDoubleVector(
         const YAML::Node& node,
         const char* key,
         size_t expected_size,
         const char* path,
         std::vector<double>* out,
-        ValidationResult* result);
+        DeployManifestValidationResult* result);
     static std::string SerializeManifest(const DeployManifest& manifest, bool include_generated_at);
     static std::uint64_t Fnv1a64(const std::string& text);
     static bool IsPositive(double value);

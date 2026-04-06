@@ -90,7 +90,14 @@ TEST_F(UnitreeAdapterContractTest, Initialize_InvalidCommandRate_ReturnsInvalidC
 
 TEST_F(UnitreeAdapterContractTest, Initialize_InvalidLegDofCount_ReturnsInvalidConfig)
 {
-    config_.leg_dof_count = 10;  // Not 12 or 20
+    config_.leg_dof_count = 10;  // Only dog-only 12-DoF body is allowed.
+    const auto status = adapter_.Initialize(config_);
+    EXPECT_EQ(status, UnitreeAdapter::Status::kInvalidConfig);
+}
+
+TEST_F(UnitreeAdapterContractTest, Initialize_DuplicateJointMapping_ReturnsInvalidConfig)
+{
+    config_.joint_mapping[1] = config_.joint_mapping[0];
     const auto status = adapter_.Initialize(config_);
     EXPECT_EQ(status, UnitreeAdapter::Status::kInvalidConfig);
 }

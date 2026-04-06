@@ -1,393 +1,119 @@
 #!/bin/bash
 set -e
 
-# Get script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-
-# Load common utilities
 source "${SCRIPT_DIR}/scripts/common.sh"
 
-# ========================
-# Configuration
-# ========================
-# By default, do not download prebuilt artifacts from GitHub HTTPS release URLs.
-# This can be overridden per-run: NO_GITHUB_HTTPS=false ./build.sh
 : "${NO_GITHUB_HTTPS:=true}"
 
-is_jetson_platform() {
-    if [ "${IS_JETSON}" = "true" ]; then
-        return 0
+ensure_package_symlink() {
+    local pkg_dir="${SCRIPT_DIR}/src/rl_sar"
+    if [ -f "${pkg_dir}/package.ros2.xml" ] && [ ! -e "${pkg_dir}/package.xml" ]; then
+        ln -s package.ros2.xml "${pkg_dir}/package.xml"
     fi
-    if [ -f /etc/nv_tegra_release ]; then
-        return 0
-    fi
-    return 1
 }
-
-# ========================
-# Build Functions
-# ========================
 
 setup_inference_runtime() {
     print_header "[Setting up Inference Runtime]"
+    local download_script="${SCRIPT_DIR}/scripts/download_inference_runtime.sh"
 
-    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-    DOWNLOAD_SCRIPT="${SCRIPT_DIR}/scripts/download_inference_runtime.sh"
-
-    if [ -f "$DOWNLOAD_SCRIPT" ]; then
-        print_info "Checking inference libraries..."
-        # Avoid GitHub HTTPS downloads in Foxy/Jetson workflow:
-        # - ONNX prebuilt package is downloaded from GitHub release URLs.
-        # - LibTorch/Jetson path does not require GitHub HTTPS.
-        local download_target="all"
-        if is_jetson_platform || [ "${NO_GITHUB_HTTPS}" = "true" ]; then
-            download_target="libtorch"
-            print_info "NO_GITHUB_HTTPS mode enabled: only setting up LibTorch (skip ONNX download from GitHub HTTPS)."
-        fi
-        bash "$DOWNLOAD_SCRIPT" "$download_target" || {
-            print_error "Failed to setup inference libraries"
-            exit 1
-        }
-        print_success "Inference runtime setup completed!"
-    else
-        print_warning "Download script not found: $DOWNLOAD_SCRIPT"
+    if [ ! -f "$download_script" ]; then
+        print_warning "Download script not found: $download_script"
+        return 0
     fi
+
+    local download_target="all"
+    if [ -f /etc/nv_tegra_release ] || [ "${NO_GITHUB_HTTPS}" = "true" ]; then
+        download_target="libtorch"
+        print_info "NO_GITHUB_HTTPS mode enabled: skip ONNX GitHub HTTPS download."
+    fi
+
+    bash "$download_script" "$download_target"
+    print_success "Inference runtime setup completed!"
 }
 
-setup_mujoco() {
-    print_header "[Setting up MuJoCo]"
-
-    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-    DOWNLOAD_MUJOCO_SCRIPT="${SCRIPT_DIR}/scripts/download_mujoco.sh"
-
-    if [ -f "$DOWNLOAD_MUJOCO_SCRIPT" ]; then
-        print_info "Checking MuJoCo library..."
-        bash "$DOWNLOAD_MUJOCO_SCRIPT" || {
-            print_error "Failed to setup MuJoCo"
-            exit 1
-        }
-        print_success "MuJoCo setup completed!"
-    else
-        print_warning "MuJoCo download script not found: $DOWNLOAD_MUJOCO_SCRIPT"
+cmake_sdk_args() {
+    local args=()
+    if [ -n "${UNITREE_SDK2_ROOT:-}" ]; then
+        args+=("-DUNITREE_SDK2_ROOT=${UNITREE_SDK2_ROOT}")
     fi
-}
-
-setup_robot_descriptions() {
-    print_header "[Setting up Robot Descriptions]"
-
-    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-    DOWNLOAD_ROBOT_DESC_SCRIPT="${SCRIPT_DIR}/scripts/download_robot_descriptions.sh"
-
-    if [ -f "$DOWNLOAD_ROBOT_DESC_SCRIPT" ]; then
-        print_info "Checking robot description files..."
-        bash "$DOWNLOAD_ROBOT_DESC_SCRIPT" || {
-            print_error "Failed to setup robot descriptions"
-            exit 1
-        }
-        print_success "Robot descriptions setup completed!"
-    else
-        print_warning "Robot descriptions download script not found: $DOWNLOAD_ROBOT_DESC_SCRIPT"
-    fi
+    printf '%s\n' "${args[@]}"
 }
 
 run_cmake_build() {
     print_header "[Running CMake Build]"
-    print_warning "NOTE: CMake build is for hardware deployment only, not for simulation."
-    print_separator
+    local extra_args=()
+    while IFS= read -r arg; do
+        [ -n "$arg" ] && extra_args+=("$arg")
+    done < <(cmake_sdk_args)
 
-    cmake src/rl_sar/ -B cmake_build -DUSE_CMAKE=ON
-    cmake --build cmake_build -j$(nproc 2>/dev/null || echo 4)
-
+    cmake -S src/rl_sar -B cmake_build -DUSE_CMAKE=ON "${extra_args[@]}"
+    cmake --build cmake_build -j"$(nproc 2>/dev/null || echo 4)"
     print_success "CMake build completed!"
-}
-
-run_mujoco_build() {
-    print_header "[Running MuJoCo Build]"
-    print_info "Building with MuJoCo simulator support..."
-    print_separator
-
-    cmake src/rl_sar/ -B cmake_build -DUSE_CMAKE=ON -DUSE_MUJOCO=ON
-    cmake --build cmake_build -j$(nproc 2>/dev/null || echo 4)
-
-    print_success "MuJoCo build completed!"
 }
 
 run_ros_build() {
     local packages=("$@")
-    local package_list=$(IFS=' '; echo "${packages[*]}")
-    local cmake_args=()
     local colcon_cmd=(colcon build --merge-install --symlink-install)
+    local cmake_args=()
 
-    print_header "[Running ROS Build]"
+    ensure_package_symlink
 
-    # Foxy on Ubuntu 20.04 expects system Python 3.8 development files.
-    # Force CMake to use /usr/bin/python3 to avoid picking /usr/local Python (e.g. 3.9/3.10 without dev headers).
     if [[ "$ROS_DISTRO" == "foxy" ]] && [ -x /usr/bin/python3 ]; then
-        local py_exec="/usr/bin/python3"
-        local py_ver=""
-        py_ver=$($py_exec -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || true)
-        local py_major_minor=""
-        py_major_minor=$($py_exec -c "import sys; print(f'{sys.version_info.major}{sys.version_info.minor}')" 2>/dev/null || true)
-        if [ -n "$py_ver" ] && [ -n "$py_major_minor" ]; then
-            local py_include="/usr/include/python${py_ver}"
-            local py_lib="/usr/lib/aarch64-linux-gnu/libpython${py_ver}.so"
-            cmake_args+=("-DPython3_EXECUTABLE=${py_exec}")
-            cmake_args+=("-DPython3_ROOT_DIR=/usr")
-            cmake_args+=("-DPython3_FIND_STRATEGY=LOCATION")
-            if [ -f "$py_include/Python.h" ]; then
-                cmake_args+=("-DPython3_INCLUDE_DIR=${py_include}")
-            fi
-            if [ -f "$py_lib" ]; then
-                cmake_args+=("-DPython3_LIBRARY=${py_lib}")
-            fi
-            print_info "Forcing CMake Python3 to: ${py_exec} (version ${py_ver})"
-        fi
+        cmake_args+=("-DPython3_EXECUTABLE=/usr/bin/python3")
+        cmake_args+=("-DPython3_ROOT_DIR=/usr")
+        cmake_args+=("-DPython3_FIND_STRATEGY=LOCATION")
     fi
 
-    # Clean existing symlinks
-    clean_existing_symlinks "${packages[@]}"
+    while IFS= read -r arg; do
+        [ -n "$arg" ] && cmake_args+=("$arg")
+    done < <(cmake_sdk_args)
 
-    # Detect incompatible artifacts
-    detect_incompatible_build_artifacts
-
-    # Create appropriate symlinks
-    if [ ${#packages[@]} -eq 0 ]; then
-        create_symlinks_for_all_packages
-    else
-        create_symlinks_for_specific_packages "${packages[@]}"
-    fi
-
-    # Execute build (Foxy-only ROS2 workspace)
-    if [ ${#packages[@]} -eq 0 ]; then
-        print_header "[Using colcon build (ROS2 Foxy)]"
-        print_info "Building all packages..."
-        if [ ${#cmake_args[@]} -gt 0 ]; then
-            colcon_cmd+=(--cmake-args "${cmake_args[@]}")
-        fi
-        "${colcon_cmd[@]}"
-    else
-        print_header "[Using colcon build (ROS2 Foxy)]"
-        print_info "Building specific packages: $package_list"
+    if [ ${#packages[@]} -gt 0 ]; then
         colcon_cmd+=(--packages-select "${packages[@]}")
-        if [ ${#cmake_args[@]} -gt 0 ]; then
-            colcon_cmd+=(--cmake-args "${cmake_args[@]}")
-        fi
-        "${colcon_cmd[@]}"
+    else
+        colcon_cmd+=(--packages-select rl_sar)
     fi
 
+    if [ ${#cmake_args[@]} -gt 0 ]; then
+        colcon_cmd+=(--cmake-args "${cmake_args[@]}")
+    fi
+
+    "${colcon_cmd[@]}"
     print_success "ROS build completed!"
 }
 
-# ========================
-# Clean Functions
-# ========================
-
 clean_workspace() {
-    local packages=("$@")
-
     print_header "[Cleaning Workspace]"
-
-    # Show what will be cleaned
-    print_info "The following will be cleaned:"
-    if [ ${#packages[@]} -eq 0 ]; then
-        echo "  - All package.xml symlinks in directory src/"
-    else
-        echo "  - Package.xml symlinks for: ${packages[*]}"
-    fi
-    echo "  - directory build/"
-    echo "  - directory cmake_build/"
-    echo "  - directory devel/"
-    echo "  - directory install/"
-    echo "  - directory log/"
-    echo "  - directory logs/"
-    echo "  - directory .catkin_tools/"
-
-    # Ask for confirmation
-    if [ ${#packages[@]} -eq 0 ]; then
-        if ! ask_confirmation "Are you sure you want to clean ALL symlinks and build artifacts?"; then
-            print_warning "Clean operation cancelled."
-            exit 0
-        fi
-    else
-        if ! ask_confirmation "Are you sure you want to clean symlinks for specified packages and build artifacts?"; then
-            print_warning "Clean operation cancelled."
-            exit 0
-        fi
-    fi
-
-    # Remove package.xml symlinks
-    if [ ${#packages[@]} -eq 0 ]; then
-        print_info "Removing all package.xml symlinks..."
-        find src -name "package.xml" -type l -delete
-        print_success "Removed all symlinks"
-    else
-        print_info "Removing symlinks for specific packages..."
-        for package_name in "${packages[@]}"; do
-            package_dir=$(find src -name "$package_name" -type d | head -n 1)
-            if [ -n "$package_dir" ]; then
-                if [ -L "$package_dir/package.xml" ]; then
-                    rm -f "$package_dir/package.xml"
-                    print_success "Removed symlink from $package_name"
-                else
-                    print_warning "No symlink found for $package_name"
-                fi
-            else
-                print_error "Package '$package_name' not found in src directory"
-            fi
-        done
-    fi
-
-    # Clean build artifacts
-    print_info "Cleaning build artifacts..."
-    rm -rf build/ cmake_build/ devel/ install/ log/ logs/ .catkin_tools/
-
+    rm -rf build/ install/ log/ cmake_build/ cmake_build_* devel/ logs/ .catkin_tools/
     print_success "Clean completed!"
 }
 
-clean_existing_symlinks() {
-    local packages=("$@")
-
-    print_header "[Cleaning Existing Symlinks]"
-
-    if [ ${#packages[@]} -eq 0 ]; then
-        print_info "Removing all existing package.xml symlinks..."
-        find src -name "package.xml" -type l -delete
-        print_success "Removed all existing symlinks"
-    else
-        print_info "Removing existing symlinks for specified packages..."
-        removed_packages=()
-        for package_name in "${packages[@]}"; do
-            package_dir=$(find src -name "$package_name" -type d | head -n 1)
-            if [ -n "$package_dir" ] && [ -L "$package_dir/package.xml" ]; then
-                rm -f "$package_dir/package.xml"
-                removed_packages+=("$package_name")
-            fi
-        done
-
-        if [ ${#removed_packages[@]} -gt 0 ]; then
-            print_success "Removed existing symlinks from: ${removed_packages[*]}"
-        else
-            print_warning "No existing symlinks found"
-        fi
-    fi
-}
-
-# ========================
-# ROS Specific Functions
-# ========================
-
-detect_incompatible_build_artifacts() {
-    print_header "[Checking for Incompatible Build Artifacts]"
-
-    local needs_cleanup=false
-
-    # Foxy-only workspace: remove ROS1 artifacts if present
-    if [ -d "devel" ] || [ -d ".catkin_tools" ]; then
-        print_warning "Found ROS1 build artifacts (devel/ or .catkin_tools/) in Foxy workspace. Cleaning..."
-        needs_cleanup=true
-    fi
-
-    if [ "$needs_cleanup" = true ]; then
-        clean_workspace
-    else
-        print_success "No incompatible build artifacts found"
-    fi
-}
-
-create_symlinks_for_package() {
-    local package_dir="$1"
-    local package_name=$(basename "$package_dir")
-
-    if [ -d "$package_dir" ]; then
-        if [ -f "$package_dir/package.ros1.xml" ] && [ -f "$package_dir/package.ros2.xml" ]; then
-            [ -e "$package_dir/package.xml" ] && rm -f "$package_dir/package.xml"
-
-            if [[ "$ROS_DISTRO" == "foxy" ]]; then
-                ln -s package.ros2.xml "$package_dir/package.xml"
-                return 0
-            else
-                print_error "This workspace is Foxy-only. Current ROS_DISTRO=$ROS_DISTRO"
-                return 1
-            fi
-        fi
-    fi
-    return 1
-}
-
-create_symlinks_for_all_packages() {
-    print_header "[Creating Symlinks for All Packages]"
-
-    created_packages=()
-    while IFS= read -r -d '' package_dir; do
-        package_dir=$(dirname "$package_dir")
-        package_name=$(basename "$package_dir")
-        if create_symlinks_for_package "$package_dir"; then
-            created_packages+=("$package_name")
-        fi
-    done < <(find src -name "package.ros1.xml" -print0)
-
-    if [ ${#created_packages[@]} -gt 0 ]; then
-        print_success "Created symlinks for: ${created_packages[*]}"
-    else
-        print_warning "No packages with dual ROS support found"
-    fi
-}
-
-create_symlinks_for_specific_packages() {
-    local packages=("$@")
-
-    print_header "[Creating Symlinks for Specific Packages]"
-    print_info "Packages to process: ${packages[*]}"
-
-    created_packages=()
-    for package_name in "${packages[@]}"; do
-        package_dir=$(find src -name "$package_name" -type d | head -n 1)
-        if [ -n "$package_dir" ] && create_symlinks_for_package "$package_dir"; then
-            created_packages+=("$package_name")
-        fi
-    done
-
-    if [ ${#created_packages[@]} -gt 0 ]; then
-        print_success "Created symlinks for: ${created_packages[*]}"
-    fi
-}
-
-# ========================
-# Main Script
-# ========================
-
 show_usage() {
     print_header "[Build System Usage]"
-    print_header
-    echo -e "Usage: $0 [OPTIONS] [PACKAGE_NAMES...]"
+    echo "Usage: $0 [OPTIONS] [PACKAGE_NAMES...]"
     echo ""
-    echo -e "${COLOR_INFO}Options:${COLOR_RESET}"
-    echo -e "  -c, --clean      Clean workspace (remove symlinks and build artifacts)"
-    echo -e "  -m, --cmake      Build using CMake (for hardware deployment only)"
-    echo -e "  -mj,--mujoco     Build with MuJoCo simulator support (CMake only)"
-    echo -e "  -h, --help       Show this help message"
+    echo "Options:"
+    echo "  -c, --clean      Clean build artifacts"
+    echo "  -m, --cmake      Standalone CMake build"
+    echo "  -h, --help       Show this help message"
     echo ""
-    echo -e "${COLOR_INFO}Examples:${COLOR_RESET}"
-    echo -e "  $0                    # Build all ROS packages"
-    echo -e "  $0 package1 package2  # Build specific ROS packages"
-    echo -e "  $0 -c                 # Clean all symlinks and build artifacts"
-    echo -e "  $0 --clean package1   # Clean specific package and build artifacts"
-    echo -e "  $0 -m                 # Build with CMake for hardware deployment"
-    echo -e "  $0 -mj                # Build with CMake and MuJoCo simulator support"
+    echo "Examples:"
+    echo "  $0"
+    echo "  $0 rl_sar"
+    echo "  $0 --cmake"
+    echo "  $0 --clean"
 }
 
 main() {
     local packages=()
     local clean_mode=false
     local cmake_mode=false
-    local mujoco_mode=false
 
-    # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
             -c|--clean) clean_mode=true; shift ;;
             -m|--cmake) cmake_mode=true; shift ;;
-            -mj|--mujoco) cmake_mode=true; mujoco_mode=true; shift ;;
             -h|--help) show_usage; exit 0 ;;
             --) shift; packages+=("$@"); break ;;
             -*) print_error "Unknown option: $1"; show_usage; exit 1 ;;
@@ -395,42 +121,27 @@ main() {
         esac
     done
 
-    # Handle MuJoCo build mode
-    if [ "$mujoco_mode" = true ]; then
-        setup_inference_runtime
-        setup_robot_descriptions
-        setup_mujoco
-        run_mujoco_build
+    if [ "$clean_mode" = true ]; then
+        clean_workspace
         exit 0
     fi
 
-    # Handle CMake build mode
+    setup_inference_runtime
+
     if [ "$cmake_mode" = true ]; then
-        setup_inference_runtime
         run_cmake_build
         exit 0
     fi
 
-    # Handle clean mode
-    if [ "$clean_mode" = true ]; then
-        clean_workspace "${packages[@]}"
-        exit 0
-    fi
-
-    # Handle ROS build
-    if [ -z "$ROS_DISTRO" ]; then
-        print_error "ROS environment not detected. Please source your ROS setup.bash first."
-        print_info "For hardware deployment, use the --cmake option instead."
+    if [ -z "${ROS_DISTRO:-}" ]; then
+        print_error "ROS environment not detected. Please source /opt/ros/foxy/setup.bash first."
         exit 1
     fi
     if [ "$ROS_DISTRO" != "foxy" ]; then
         print_error "This workspace only supports ROS2 Foxy. Current ROS_DISTRO=$ROS_DISTRO"
-        print_info "Please source /opt/ros/foxy/setup.bash and retry."
         exit 1
     fi
 
-    setup_inference_runtime
-    setup_robot_descriptions
     run_ros_build "${packages[@]}"
 }
 

@@ -31,6 +31,37 @@ constexpr uint8_t kMotorModeDisabled = 0x00;
 // Unitree Go2 has 20 motors total (12 leg + 6 arm + 2 waist)
 constexpr int kUnitreeMotorCount = 20;
 
+uint32_t Crc32Core(const uint32_t* ptr, uint32_t len)
+{
+    uint32_t xbit = 0;
+    uint32_t data = 0;
+    uint32_t crc32 = 0xFFFFFFFF;
+    constexpr uint32_t kPolynomial = 0x04c11db7;
+    for (uint32_t i = 0; i < len; ++i)
+    {
+        xbit = 1u << 31;
+        data = ptr[i];
+        for (uint32_t bits = 0; bits < 32; ++bits)
+        {
+            if (crc32 & 0x80000000u)
+            {
+                crc32 <<= 1;
+                crc32 ^= kPolynomial;
+            }
+            else
+            {
+                crc32 <<= 1;
+            }
+            if (data & xbit)
+            {
+                crc32 ^= kPolynomial;
+            }
+            xbit >>= 1;
+        }
+    }
+    return crc32;
+}
+
 namespace rl_sar::adapters
 {
 
@@ -110,9 +141,22 @@ UnitreeAdapter::Status UnitreeAdapter::Initialize(const Config& config)
     {
         return Status::kInvalidConfig;
     }
-    if (config.leg_dof_count != 12 && config.leg_dof_count != 20)
+    if (config.leg_dof_count != protocol::kDogJointCount)
     {
         return Status::kInvalidConfig;
+    }
+    std::array<bool, kUnitreeMotorCount> seen_mapping{};
+    for (int motor_index : config.joint_mapping)
+    {
+        if (motor_index < 0 || motor_index >= kUnitreeMotorCount)
+        {
+            return Status::kInvalidConfig;
+        }
+        if (seen_mapping[static_cast<size_t>(motor_index)])
+        {
+            return Status::kInvalidConfig;
+        }
+        seen_mapping[static_cast<size_t>(motor_index)] = true;
     }
 
     config_ = config;
@@ -123,7 +167,10 @@ UnitreeAdapter::Status UnitreeAdapter::Initialize(const Config& config)
         // Note: ChannelFactory::Instance()->Init() should be called once per process
         // We assume it's initialized by the main application
         // If not initialized, we attempt to initialize it here
-        ChannelFactory::Instance()->Init(0, config_.network_interface.c_str());
+        if (config_.initialize_channel_factory)
+        {
+            ChannelFactory::Instance()->Init(0, config_.network_interface.c_str());
+        }
 
         // Create lowcmd publisher
         lowcmd_publisher_ = std::make_unique<LowCmdPublisher>();
@@ -197,6 +244,7 @@ void UnitreeAdapter::Stop()
     if (lowcmd_publisher_ && lowcmd_buffer_)
     {
         InitializeLowCmd();
+        lowcmd_buffer_->crc() = ComputeLowCmdCrc(*lowcmd_buffer_);
         try
         {
             if (lowcmd_publisher_->publisher)
@@ -394,10 +442,17 @@ void UnitreeAdapter::LowStateMessageHandler(const void* message)
     }
 
     // Copy motor state (we only care about the first 12 for leg DOFs)
-    const int leg_count = std::min(static_cast<int>(config_.leg_dof_count), kUnitreeMotorCount);
-    for (int i = 0; i < leg_count; ++i)
+    latest_state_.leg_q.fill(0.0f);
+    latest_state_.leg_dq.fill(0.0f);
+    latest_state_.leg_tau.fill(0.0f);
+    for (int i = 0; i < protocol::kDogJointCount; ++i)
     {
-        const auto& motor_state = msg->motor_state()[i];
+        const int motor_index = ResolveMotorIndexForBodyJoint(i);
+        if (motor_index < 0 || motor_index >= kUnitreeMotorCount)
+        {
+            continue;
+        }
+        const auto& motor_state = msg->motor_state()[motor_index];
         latest_state_.leg_q[static_cast<size_t>(i)] = motor_state.q();
         latest_state_.leg_dq[static_cast<size_t>(i)] = motor_state.dq();
         latest_state_.leg_tau[static_cast<size_t>(i)] = motor_state.tau_est();
@@ -420,8 +475,8 @@ void UnitreeAdapter::LowStateMessageHandler(const void* message)
         lowstate_seen_.store(true, std::memory_order_release);
     }
 
-    // Increment lowstate sequence
-    IncrementLowstateSeq();
+    // Increment lowstate sequence and stamp it onto the typed frame
+    latest_state_.header.seq = IncrementLowstateSeq();
 }
 
 // ============================================================================
@@ -464,16 +519,27 @@ void UnitreeAdapter::ConvertBodyCommandToLowCmd(const protocol::BodyCommandFrame
     // Keep header and GPIO set from initialization
     // motor commands are updated based on body_cmd
 
-    // Map the 12 leg DOFs to the first 12 motors in Unitree's motor array
-    const int leg_count = std::min(static_cast<int>(body_cmd.joint_count),
-                                   static_cast<int>(config_.leg_dof_count));
-    const int motor_count = std::min(leg_count, kUnitreeMotorCount);
-
-    for (int i = 0; i < motor_count; ++i)
+    for (int i = 0; i < kUnitreeMotorCount; ++i)
     {
-        auto& motor_cmd = cmd.motor_cmd()[i];
+        cmd.motor_cmd()[i].mode() = kMotorModeDisabled;
+        cmd.motor_cmd()[i].q() = kPosStopF;
+        cmd.motor_cmd()[i].dq() = kVelStopF;
+        cmd.motor_cmd()[i].kp() = 0.0f;
+        cmd.motor_cmd()[i].kd() = 0.0f;
+        cmd.motor_cmd()[i].tau() = 0.0f;
+    }
 
-        // Check if we have valid command data
+    const int leg_count = std::min(
+        static_cast<int>(body_cmd.joint_count),
+        static_cast<int>(protocol::kDogJointCount));
+    for (int i = 0; i < leg_count; ++i)
+    {
+        const int motor_index = ResolveMotorIndexForBodyJoint(i);
+        if (motor_index < 0 || motor_index >= kUnitreeMotorCount)
+        {
+            continue;
+        }
+        auto& motor_cmd = cmd.motor_cmd()[motor_index];
         const bool has_valid_cmd =
             std::isfinite(body_cmd.q[static_cast<size_t>(i)]) ||
             std::isfinite(body_cmd.tau[static_cast<size_t>(i)]);
@@ -511,38 +577,14 @@ void UnitreeAdapter::ConvertBodyCommandToLowCmd(const protocol::BodyCommandFrame
                     : 0.0f;
             }
         }
-        else
-        {
-            // No valid command - set to safe defaults
-            motor_cmd.mode() = kMotorModeDisabled;
-            motor_cmd.q() = kPosStopF;
-            motor_cmd.dq() = kVelStopF;
-            motor_cmd.kp() = 0.0f;
-            motor_cmd.kd() = 0.0f;
-            motor_cmd.tau() = 0.0f;
-        }
     }
 
-    // For any additional motors beyond leg_count, set to disabled
-    for (int i = motor_count; i < kUnitreeMotorCount; ++i)
-    {
-        cmd.motor_cmd()[i].mode() = kMotorModeDisabled;
-        cmd.motor_cmd()[i].q() = kPosStopF;
-        cmd.motor_cmd()[i].dq() = kVelStopF;
-        cmd.motor_cmd()[i].kp() = 0.0f;
-        cmd.motor_cmd()[i].kd() = 0.0f;
-        cmd.motor_cmd()[i].tau() = 0.0f;
-    }
-
-    // Calculate CRC32 (Unitree requires this for valid commands)
-    // The CRC is calculated over the entire LowCmd_ structure
-    // For now, we set it to 0 as the SDK may handle this
-    cmd.crc() = 0;
+    cmd.crc() = ComputeLowCmdCrc(cmd);
 }
 
-void UnitreeAdapter::IncrementLowstateSeq()
+uint64_t UnitreeAdapter::IncrementLowstateSeq()
 {
-    lowstate_seq_.fetch_add(1, std::memory_order_release);
+    return lowstate_seq_.fetch_add(1, std::memory_order_release) + 1;
 }
 
 uint64_t UnitreeAdapter::GetMonotonicNs()
@@ -550,6 +592,23 @@ uint64_t UnitreeAdapter::GetMonotonicNs()
     const auto now = std::chrono::steady_clock::now();
     return static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count());
+}
+
+int UnitreeAdapter::ResolveMotorIndexForBodyJoint(const int body_joint_index) const
+{
+    if (body_joint_index < 0 ||
+        body_joint_index >= static_cast<int>(config_.joint_mapping.size()))
+    {
+        return -1;
+    }
+    return config_.joint_mapping[static_cast<size_t>(body_joint_index)];
+}
+
+uint32_t UnitreeAdapter::ComputeLowCmdCrc(const unitree_go::msg::dds_::LowCmd_& cmd)
+{
+    return Crc32Core(
+        reinterpret_cast<const uint32_t*>(&cmd),
+        (sizeof(unitree_go::msg::dds_::LowCmd_) >> 2) - 1);
 }
 
 // ============================================================================

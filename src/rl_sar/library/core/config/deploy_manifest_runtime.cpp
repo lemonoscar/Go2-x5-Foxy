@@ -5,6 +5,8 @@
 namespace RLConfig
 {
 
+using ValidationResult = DeployManifestValidationResult;
+
 DeployManifestRuntime::DeployManifestRuntime(std::string manifest_path)
     : loader_(NormalizeManifestPath(manifest_path))
 {

@@ -1,14 +1,26 @@
 
 #include "rl_sar/core/rl_real_go2_x5.hpp"
-#include "rl_sar/go2x5/arm/go2_x5_arm_output_guard.hpp"
+#include "rl_sar/adapters/arx_adapter.hpp"
+#include "rl_sar/adapters/unitree_adapter.hpp"
+#include "rl_sar/diagnostics/diagnostics_publisher.hpp"
+#include "rl_sar/diagnostics/drift_recorder.hpp"
+#include "rl_sar/go2x5/arm/go2_x5_arm_controller.hpp"
+#include "rl_sar/go2x5/config/go2_x5_config.hpp"
 #include "rl_sar/go2x5/control/go2_x5_control_logic.hpp"
+#include "rl_sar/go2x5/state/go2_x5_state_manager.hpp"
+#include "rl_sar/logger/event_logger.hpp"
 #include "rl_sar/go2x5/safety/go2_x5_safety_guard.hpp"
+#include "fsm_go2_x5.hpp"
+#include "library/core/config/config_loader.hpp"
 #include "library/core/config/deploy_manifest_runtime.hpp"
+#include "matplotlibcpp.h"
+#include "loop.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <iomanip>
 #include <filesystem>
@@ -24,6 +36,12 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
+
+namespace plt = matplotlibcpp;
+
+using unitree::robot::ChannelFactory;
+using unitree::robot::ChannelPublisher;
+using unitree::robot::ChannelSubscriber;
 
 namespace
 {
@@ -83,6 +101,37 @@ int ParseIntArgValue(const std::string& raw_value, const int fallback)
     {
         return fallback;
     }
+}
+
+std::filesystem::path ResolveProjectRootFromManifestPath(const std::string& manifest_path)
+{
+    if (!manifest_path.empty())
+    {
+        std::filesystem::path candidate(manifest_path);
+        if (!candidate.is_absolute())
+        {
+            candidate = std::filesystem::absolute(candidate);
+        }
+        const auto manifest_dir = candidate.parent_path();
+        if (manifest_dir.filename() == "deploy")
+        {
+            return manifest_dir.parent_path();
+        }
+    }
+
+    const std::filesystem::path cwd = std::filesystem::current_path();
+    if (std::filesystem::exists(cwd / "policy" / "go2_x5" / "base.yaml"))
+    {
+        return cwd;
+    }
+    return cwd;
+}
+
+std::string GetPolicyPathForRuntime(const std::string& manifest_path)
+{
+    std::filesystem::path policy_root = ResolveProjectRootFromManifestPath(manifest_path) / "policy";
+    policy_root /= "";
+    return policy_root.string();
 }
 
 Go2X5RuntimeOptions ParseGo2X5RuntimeOptions(int argc, char **argv)
@@ -206,6 +255,39 @@ bool MakeIpv4Endpoint(const std::string& host, const int port, sockaddr_in& addr
 }
 #endif
 
+rl_sar::logger::ModeType ToLoggerMode(const Go2X5Supervisor::Mode mode)
+{
+    using rl_sar::logger::ModeType;
+    switch (mode)
+    {
+    case Go2X5Supervisor::Mode::Boot: return ModeType::BOOT;
+    case Go2X5Supervisor::Mode::Probe: return ModeType::PROBE;
+    case Go2X5Supervisor::Mode::Passive: return ModeType::PASSIVE;
+    case Go2X5Supervisor::Mode::Ready: return ModeType::READY;
+    case Go2X5Supervisor::Mode::RlDogOnlyActive: return ModeType::RL_DOG_ONLY_ACTIVE;
+    case Go2X5Supervisor::Mode::ManualArm: return ModeType::MANUAL_ARM;
+    case Go2X5Supervisor::Mode::DegradedArm: return ModeType::DEGRADED_ARM;
+    case Go2X5Supervisor::Mode::DegradedBody: return ModeType::DEGRADED_BODY;
+    case Go2X5Supervisor::Mode::SoftStop: return ModeType::SOFT_STOP;
+    case Go2X5Supervisor::Mode::FaultLatched: return ModeType::FAULT_LATCHED;
+    }
+    return ModeType::BOOT;
+}
+
+rl_sar::logger::FaultType ToLoggerFault(const Go2X5Supervisor::ReasonCode code)
+{
+    using rl_sar::logger::FaultType;
+    switch (code)
+    {
+    case Go2X5Supervisor::ReasonCode::BodyStateStale: return FaultType::BODY_STATE_STALE;
+    case Go2X5Supervisor::ReasonCode::ArmStateStale: return FaultType::ARM_STATE_STALE;
+    case Go2X5Supervisor::ReasonCode::PolicyTimeout: return FaultType::POLICY_STALE;
+    case Go2X5Supervisor::ReasonCode::ArmTrackingErrorTooHigh: return FaultType::ARM_TRACKING_ERROR;
+    case Go2X5Supervisor::ReasonCode::DdsWriteFail: return FaultType::DDS_FAILURE;
+    default: return FaultType::UNKNOWN;
+    }
+}
+
 } // namespace
 
 RL_Real_Go2X5::RL_Real_Go2X5(int argc, char **argv)
@@ -220,6 +302,7 @@ RL_Real_Go2X5::RL_Real_Go2X5(int argc, char **argv)
     this->robot_name = "go2_x5";
     this->ReadYaml(this->robot_name, "base.yaml");
     this->InitializeArmConfig();
+    this->legacy_rl_output_path_enabled = false;
     this->ValidateJointMappingOrThrow("base.yaml");
     std::cout << LOGGER::INFO << "[Boot] base.yaml loaded and arm config validated" << std::endl;
 
@@ -314,6 +397,7 @@ RL_Real_Go2X5::RL_Real_Go2X5(int argc, char **argv)
     }
     std::cout << LOGGER::INFO << "[Boot] Motion control-related service released" << std::endl;
 
+    this->InitializeRuntimeIntegrations();
     this->RefreshSupervisorState("boot");
 
     std::cout << LOGGER::INFO << "Real deploy target: go2_x5" << std::endl;
@@ -364,6 +448,26 @@ RL_Real_Go2X5::RL_Real_Go2X5(int argc, char **argv)
 RL_Real_Go2X5::~RL_Real_Go2X5()
 {
     this->SafeShutdownNow();
+    if (this->diagnostics_publisher_)
+    {
+        this->diagnostics_publisher_->Stop();
+    }
+    if (this->drift_recorder_)
+    {
+        this->drift_recorder_->StopRecordingWindow();
+    }
+    if (this->event_logger_)
+    {
+        this->event_logger_->Shutdown();
+    }
+    if (this->arx_adapter_)
+    {
+        this->arx_adapter_->Stop();
+    }
+    if (this->unitree_adapter_)
+    {
+        this->unitree_adapter_->Stop();
+    }
     // Restore built-in motion service so wireless controller can take over after process exit.
     if (!this->QueryMotionStatus())
     {
@@ -416,7 +520,8 @@ void RL_Real_Go2X5::InitializeConfigLoader()
     config_loader_ = std::make_unique<RLConfig::ConfigLoader>();
 
     // Load base.yaml configuration
-    const std::string base_yaml_path = GetPolicyPath() + "go2_x5/base.yaml";
+    const std::string policy_path = GetPolicyPathForRuntime(this->deploy_manifest_path_);
+    const std::string base_yaml_path = policy_path + "go2_x5/base.yaml";
     auto result = config_loader_->LoadLayerFromFile(RLConfig::ConfigLayer::BaseYaml, base_yaml_path);
     if (!result.is_valid)
     {
@@ -424,7 +529,7 @@ void RL_Real_Go2X5::InitializeConfigLoader()
     }
 
     // Load robot_lab config if exists
-    const std::string lab_yaml_path = GetPolicyPath() + "go2_x5/robot_lab/config.yaml";
+    const std::string lab_yaml_path = policy_path + "go2_x5/robot_lab/config.yaml";
     struct stat buffer;
     if (stat(lab_yaml_path.c_str(), &buffer) == 0)
     {
@@ -559,6 +664,7 @@ void RL_Real_Go2X5::InitializeArmConfig()
     this->InitializeArmCommandState();
     this->InitializeArmChannelConfig();
     this->InitializeRealDeploySafetyConfig();
+    this->InitializeCoordinator();
     std::cout << LOGGER::INFO << "[Boot] Arm configuration initialized" << std::endl;
 }
 
@@ -594,6 +700,215 @@ void RL_Real_Go2X5::InitializeSupervisor()
               << " policy_stale_us=" << supervisor_->config().policy_stale_us
               << " manifest_valid=" << (manifest_valid_ ? "true" : "false")
               << std::endl;
+}
+
+void RL_Real_Go2X5::InitializeCoordinator()
+{
+    rl_sar::runtime::coordinator::Config coordinator_config;
+    if (this->deploy_manifest_runtime_ && this->deploy_manifest_runtime_->HasManifest())
+    {
+        const auto snapshot = this->deploy_manifest_runtime_->Snapshot();
+        if (snapshot.body_command_expire_ms > 0)
+        {
+            coordinator_config.body_command_expire_ns =
+                static_cast<uint64_t>(snapshot.body_command_expire_ms) * 1'000'000ULL;
+        }
+        if (snapshot.arm_command_expire_ms > 0)
+        {
+            coordinator_config.arm_command_expire_ns =
+                static_cast<uint64_t>(snapshot.arm_command_expire_ms) * 1'000'000ULL;
+        }
+    }
+
+    const auto default_dof_pos = this->GetDefaultDofPos();
+    const auto fixed_kp = this->GetFixedKp();
+    const auto fixed_kd = this->GetFixedKd();
+    const auto action_scale = this->config_->GetActionScale();
+    const auto torque_limits = this->GetDefaultWholeBodyEffortLimits();
+    const int num_dofs = this->GetNumDofs();
+
+    size_t body_idx = 0;
+    for (int joint_idx = 0;
+         joint_idx < num_dofs && body_idx < rl_sar::protocol::kBodyJointCount;
+         ++joint_idx)
+    {
+        if (this->IsArmJointIndex(joint_idx))
+        {
+            continue;
+        }
+
+        const size_t body_slot = body_idx++;
+        const size_t joint_slot = static_cast<size_t>(joint_idx);
+        coordinator_config.default_leg_q[body_slot] =
+            joint_slot < default_dof_pos.size() ? default_dof_pos[joint_slot] : 0.0f;
+        coordinator_config.safe_stand_q[body_slot] =
+            coordinator_config.default_leg_q[body_slot];
+        coordinator_config.rl_kp[body_slot] =
+            joint_slot < fixed_kp.size() ? fixed_kp[joint_slot] : 0.0f;
+        coordinator_config.rl_kd[body_slot] =
+            joint_slot < fixed_kd.size() ? fixed_kd[joint_slot] : 0.0f;
+
+        float scale_value = 0.0f;
+        if (joint_slot < action_scale.size())
+        {
+            scale_value = action_scale[joint_slot];
+        }
+        else if (body_slot < action_scale.size())
+        {
+            scale_value = action_scale[body_slot];
+        }
+        coordinator_config.action_scale[body_slot] = scale_value;
+
+        float torque_limit = 0.0f;
+        if (joint_slot < torque_limits.size() && std::isfinite(torque_limits[joint_slot]))
+        {
+            torque_limit = std::max(0.0f, std::fabs(torque_limits[joint_slot]));
+        }
+        coordinator_config.torque_limits[body_slot] = torque_limit;
+    }
+
+    this->coordinator_ =
+        std::make_unique<rl_sar::runtime::coordinator::HybridMotionCoordinator>(coordinator_config);
+    std::cout << LOGGER::INFO
+              << "[Boot] Coordinator initialized"
+              << " body_expire_ns=" << coordinator_config.body_command_expire_ns
+              << " arm_expire_ns=" << coordinator_config.arm_command_expire_ns
+              << std::endl;
+}
+
+void RL_Real_Go2X5::InitializeRuntimeIntegrations()
+{
+    this->InitializeAdapters();
+    this->InitializeDiagnostics();
+}
+
+void RL_Real_Go2X5::InitializeAdapters()
+{
+    if (!this->deploy_manifest_runtime_ || !this->deploy_manifest_runtime_->HasManifest())
+    {
+        return;
+    }
+
+    const auto& manifest = this->deploy_manifest_runtime_->Manifest();
+
+    this->unitree_adapter_ = std::make_unique<rl_sar::adapters::UnitreeAdapter>();
+    rl_sar::adapters::UnitreeAdapter::Config body_config;
+    body_config.network_interface = manifest.body_adapter.network_interface;
+    body_config.command_rate_hz = manifest.body_adapter.command_rate_hz;
+    body_config.require_lowstate = manifest.body_adapter.require_lowstate;
+    body_config.lowstate_timeout_ms = static_cast<double>(manifest.body_adapter.lowstate_timeout_ms);
+    body_config.leg_dof_count = static_cast<uint16_t>(manifest.robot.leg_joint_count);
+    body_config.source_id = 1U;
+    body_config.initialize_channel_factory = false;
+    for (size_t i = 0; i < body_config.joint_mapping.size(); ++i)
+    {
+        body_config.joint_mapping[i] =
+            (i < manifest.robot.joint_mapping.size())
+                ? manifest.robot.joint_mapping[i]
+                : static_cast<int>(i);
+    }
+    const auto body_init = this->unitree_adapter_->Initialize(body_config);
+    if (body_init == rl_sar::adapters::UnitreeAdapter::Status::kOk &&
+        this->unitree_adapter_->Start() == rl_sar::adapters::UnitreeAdapter::Status::kOk)
+    {
+        this->unitree_adapter_active_ = true;
+        std::cout << LOGGER::INFO
+                  << "[Boot] UnitreeAdapter active: iface=" << body_config.network_interface
+                  << ", rate_hz=" << body_config.command_rate_hz
+                  << std::endl;
+    }
+    else
+    {
+        this->unitree_adapter_active_ = false;
+        std::cout << LOGGER::WARNING
+                  << "[Boot] UnitreeAdapter init failed. Falling back to legacy Unitree path."
+                  << std::endl;
+    }
+
+    const bool external_arm_pipeline_active =
+        Go2X5IPC::IsIpcTransport(this->arm_bridge_transport) || this->arm_bridge_transport == "ros";
+    if (this->arm_split_control_enabled && this->arm_joint_count > 0 && !external_arm_pipeline_active)
+    {
+        this->arx_adapter_ = std::make_unique<rl_sar::adapters::ArxAdapter>();
+        rl_sar::adapters::ArxAdapter::Config arm_config;
+        arm_config.can_interface = manifest.arm_adapter.can_interface;
+        arm_config.target_rate_hz = manifest.arm_adapter.arm_target_rate_hz;
+        arm_config.servo_rate_hz = manifest.arm_adapter.servo_rate_hz;
+        arm_config.background_send_recv = manifest.arm_adapter.background_send_recv;
+        arm_config.controller_dt = manifest.arm_adapter.controller_dt;
+        arm_config.require_live_state = manifest.arm_adapter.require_live_state;
+        arm_config.arm_state_timeout_ms = static_cast<double>(manifest.arm_adapter.arm_state_timeout_ms);
+        arm_config.arm_tracking_error_limit = manifest.arm_adapter.arm_tracking_error_limit;
+        if (const char* sdk_root = std::getenv("ARX5_SDK_ROOT"))
+        {
+            arm_config.sdk_root = sdk_root;
+        }
+        if (const char* sdk_lib_path = std::getenv("ARX5_SDK_LIB_PATH"))
+        {
+            arm_config.sdk_lib_path = sdk_lib_path;
+        }
+        this->arx_adapter_active_ = this->arx_adapter_->Initialize(arm_config);
+        if (this->arx_adapter_active_)
+        {
+            this->arx_adapter_->Start();
+            std::cout << LOGGER::INFO
+                      << "[Boot] ArxAdapter active: can=" << arm_config.can_interface
+                      << ", servo_rate_hz=" << arm_config.servo_rate_hz
+                      << std::endl;
+        }
+        else
+        {
+            std::cout << LOGGER::WARNING
+                      << "[Boot] ArxAdapter init failed. Falling back to bridge transport path."
+                      << std::endl;
+        }
+    }
+    else if (this->arm_split_control_enabled && this->arm_joint_count > 0)
+    {
+        this->arx_adapter_active_ = false;
+        std::cout << LOGGER::INFO
+                  << "[Boot] External arm pipeline owns hardware transport; ArxAdapter remains inactive."
+                  << std::endl;
+    }
+}
+
+void RL_Real_Go2X5::InitializeDiagnostics()
+{
+    this->diagnostics_publisher_ = std::make_unique<rl_sar::diagnostics::DiagnosticsPublisher>();
+    this->drift_recorder_ = std::make_unique<rl_sar::diagnostics::DriftMetricsRecorder>();
+    this->event_logger_ = std::make_unique<rl_sar::logger::EventLogger>();
+
+    rl_sar::diagnostics::DiagnosticsPublisher::Config diagnostics_config;
+    diagnostics_config.ros2_enabled = false;
+    diagnostics_config.publish_rate_hz = 50;
+    diagnostics_config.node_name = "go2_x5_diagnostics";
+    diagnostics_config.diagnostics_topic = "/go2_x5/diagnostics";
+    if (this->deploy_manifest_runtime_ && this->deploy_manifest_runtime_->HasManifest())
+    {
+        const auto snapshot = this->deploy_manifest_runtime_->Snapshot();
+        diagnostics_config.ros2_enabled = this->enable_ros2_runtime && snapshot.ros2_enabled;
+        diagnostics_config.ros2_mirror_only = snapshot.ros2_mirror_only;
+        diagnostics_config.publish_rate_hz = std::max(1, snapshot.diagnostics_rate_hz);
+    }
+    if (this->diagnostics_publisher_->Initialize(diagnostics_config))
+    {
+        this->diagnostics_publisher_->Start();
+    }
+
+    rl_sar::diagnostics::DriftMetricsRecorder::Config drift_config;
+    drift_config.auto_start_on_zero_cmd = false;
+    drift_config.output_csv_path = "/tmp/go2_x5_drift.csv";
+    this->drift_recorder_->Initialize(drift_config);
+    this->drift_recorder_->StartRecordingWindow();
+
+    rl_sar::logger::EventLoggerConfig logger_config;
+    logger_config.flush_on_write = true;
+    logger_config.enable_console_logging = true;
+    logger_config.enable_file_logging = true;
+    logger_config.enable_json_logging = true;
+    logger_config.log_file_path = "/tmp/go2_x5_events.log";
+    logger_config.json_log_path = "/tmp/go2_x5_events.jsonl";
+    this->event_logger_->Initialize(logger_config);
 }
 
 Go2X5Supervisor::WatchdogInput RL_Real_Go2X5::BuildSupervisorInput() const
@@ -655,6 +970,560 @@ Go2X5Supervisor::WatchdogInput RL_Real_Go2X5::BuildSupervisorInput() const
     return input;
 }
 
+rl_sar::runtime::coordinator::Input RL_Real_Go2X5::BuildCoordinatorInput(
+    const uint64_t now_monotonic_ns) const
+{
+    rl_sar::runtime::coordinator::Input input;
+    input.now_monotonic_ns = now_monotonic_ns;
+    input.mode = Go2X5Supervisor::Mode::Boot;
+
+    {
+        std::lock_guard<std::mutex> lock(this->supervisor_mutex);
+        if (this->supervisor_)
+        {
+            input.mode = this->supervisor_->mode();
+        }
+    }
+
+    const auto now_tp = std::chrono::steady_clock::now();
+    const int num_dofs = this->GetNumDofs();
+    if (this->robot_state.motor_state.q.size() >= static_cast<size_t>(num_dofs) &&
+        this->robot_state.motor_state.dq.size() >= static_cast<size_t>(num_dofs) &&
+        this->robot_state.motor_state.tau_est.size() >= static_cast<size_t>(num_dofs))
+    {
+        input.has_body_state = true;
+        auto& frame = input.body_state;
+        frame.header.msg_type = rl_sar::protocol::FrameType::BodyState;
+        frame.header.seq = this->body_state_seq_;
+        frame.header.source_monotonic_ns = now_monotonic_ns;
+        frame.header.publish_monotonic_ns = now_monotonic_ns;
+        frame.header.mode = static_cast<uint16_t>(input.mode);
+        frame.header.validity_flags = rl_sar::protocol::kValidityPayloadValid;
+        frame.dds_ok = this->body_dds_write_ok_runtime_.load(std::memory_order_relaxed) ? 1U : 0U;
+        {
+            std::lock_guard<std::mutex> lock(this->unitree_state_mutex);
+            frame.lowstate_age_us = static_cast<uint32_t>(
+                std::min<uint64_t>(TimePointAgeUs(this->body_state_stamp_, now_tp),
+                                   std::numeric_limits<uint32_t>::max()));
+        }
+        for (size_t i = 0; i < std::min<size_t>(4, this->robot_state.imu.quaternion.size()); ++i)
+        {
+            frame.imu_quat[i] = this->robot_state.imu.quaternion[i];
+        }
+        for (size_t i = 0; i < std::min<size_t>(3, this->robot_state.imu.gyroscope.size()); ++i)
+        {
+            frame.imu_gyro[i] = this->robot_state.imu.gyroscope[i];
+        }
+
+        size_t body_idx = 0;
+        for (int joint_idx = 0;
+             joint_idx < num_dofs && body_idx < rl_sar::protocol::kBodyJointCount;
+             ++joint_idx)
+        {
+            if (this->IsArmJointIndex(joint_idx))
+            {
+                continue;
+            }
+            const size_t joint_slot = static_cast<size_t>(joint_idx);
+            frame.leg_q[body_idx] = this->robot_state.motor_state.q[joint_slot];
+            frame.leg_dq[body_idx] = this->robot_state.motor_state.dq[joint_slot];
+            frame.leg_tau[body_idx] = this->robot_state.motor_state.tau_est[joint_slot];
+            ++body_idx;
+        }
+    }
+
+    std::vector<float> latest_arm_target;
+    {
+        std::lock_guard<std::mutex> lock(this->arm_command_mutex);
+        latest_arm_target = this->arm_joint_command_latest;
+        if (latest_arm_target.size() != static_cast<size_t>(this->arm_joint_count))
+        {
+            latest_arm_target = this->arm_hold_position;
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(this->arm_external_state_mutex);
+        if (this->arm_joint_count > 0 &&
+            this->arm_external_state_q.size() >= static_cast<size_t>(this->arm_joint_count))
+        {
+            input.has_arm_state = true;
+            auto& frame = input.arm_state;
+            frame.header.msg_type = rl_sar::protocol::FrameType::ArmState;
+            frame.header.seq = this->arm_state_seq_;
+            frame.header.source_monotonic_ns = now_monotonic_ns;
+            frame.header.publish_monotonic_ns = now_monotonic_ns;
+            frame.header.mode = static_cast<uint16_t>(input.mode);
+            frame.header.validity_flags = rl_sar::protocol::kValidityPayloadValid;
+            if (this->arm_bridge_state_from_backend)
+            {
+                frame.header.validity_flags |= rl_sar::protocol::kValidityFromBackend;
+            }
+            if (!this->arm_bridge_state_from_backend)
+            {
+                frame.header.validity_flags |= rl_sar::protocol::kValidityShadowState;
+            }
+            frame.joint_count = static_cast<uint16_t>(this->arm_joint_count);
+            frame.backend_age_us = static_cast<uint32_t>(
+                std::min<uint64_t>(TimePointAgeUs(this->arm_bridge_state_stamp, now_tp),
+                                   std::numeric_limits<uint32_t>::max()));
+            frame.transport_age_us = frame.backend_age_us;
+            frame.target_seq_applied = this->arm_state_seq_;
+            for (int i = 0; i < this->arm_joint_count && i < static_cast<int>(rl_sar::protocol::kArmJointCount); ++i)
+            {
+                const size_t idx = static_cast<size_t>(i);
+                frame.q[idx] = this->arm_external_state_q[idx];
+                if (idx < this->arm_external_state_dq.size())
+                {
+                    frame.dq[idx] = this->arm_external_state_dq[idx];
+                }
+                if (idx < this->arm_external_state_tau.size())
+                {
+                    frame.tau[idx] = this->arm_external_state_tau[idx];
+                }
+                if (idx < latest_arm_target.size())
+                {
+                    frame.q_target[idx] = latest_arm_target[idx];
+                    frame.tracking_error[idx] = this->arm_external_state_q[idx] - latest_arm_target[idx];
+                }
+            }
+        }
+        input.arm_backend_valid = this->arm_bridge_state_valid && this->arm_bridge_state_from_backend;
+        input.arm_tracking_error_high = this->arm_tracking_error_high_runtime_;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(this->policy_frame_mutex);
+        if (this->latest_policy_command_valid_)
+        {
+            input.has_policy_command = true;
+            input.dog_policy_command = this->latest_policy_command_frame_;
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(this->arm_command_mutex);
+        if (this->arm_joint_command_latest.size() == static_cast<size_t>(this->arm_joint_count) &&
+            this->arm_joint_count > 0)
+        {
+            input.has_arm_command = true;
+            auto& frame = input.arm_command;
+            frame.header.msg_type = rl_sar::protocol::FrameType::ArmCommand;
+            frame.header.source_monotonic_ns = now_monotonic_ns;
+            frame.header.publish_monotonic_ns = now_monotonic_ns;
+            frame.header.mode = static_cast<uint16_t>(input.mode);
+            frame.header.validity_flags = rl_sar::protocol::kValidityPayloadValid;
+            frame.joint_count = static_cast<uint16_t>(this->arm_joint_count);
+            uint64_t expire_ns = now_monotonic_ns + 15'000'000ULL;
+            if (this->deploy_manifest_runtime_ && this->deploy_manifest_runtime_->HasManifest())
+            {
+                const auto snapshot = this->deploy_manifest_runtime_->Snapshot();
+                if (snapshot.arm_command_expire_ms > 0)
+                {
+                    expire_ns = now_monotonic_ns +
+                        static_cast<uint64_t>(snapshot.arm_command_expire_ms) * 1'000'000ULL;
+                }
+            }
+            frame.command_expire_ns = expire_ns;
+            const auto fixed_kp = this->GetFixedKp();
+            const auto fixed_kd = this->GetFixedKd();
+            for (int i = 0; i < this->arm_joint_count && i < static_cast<int>(rl_sar::protocol::kArmJointCount); ++i)
+            {
+                const size_t idx = static_cast<size_t>(i);
+                const int joint_idx = this->arm_joint_start_index + i;
+                frame.q[idx] = this->arm_joint_command_latest[idx];
+                frame.dq[idx] = 0.0f;
+                frame.tau[idx] = 0.0f;
+                frame.kp[idx] =
+                    (joint_idx >= 0 && joint_idx < static_cast<int>(fixed_kp.size()))
+                        ? fixed_kp[static_cast<size_t>(joint_idx)]
+                        : 0.0f;
+                frame.kd[idx] =
+                    (joint_idx >= 0 && joint_idx < static_cast<int>(fixed_kd.size()))
+                        ? fixed_kd[static_cast<size_t>(joint_idx)]
+                        : 0.0f;
+            }
+        }
+    }
+
+    return input;
+}
+
+bool RL_Real_Go2X5::SyncBodyStateFromAdapter(RobotState<float>* state)
+{
+    if (!state || !this->unitree_adapter_active_ || !this->unitree_adapter_)
+    {
+        return false;
+    }
+
+    rl_sar::protocol::BodyStateFrame frame;
+    if (!this->unitree_adapter_->GetState(frame))
+    {
+        return false;
+    }
+
+    const auto diag = this->unitree_adapter_->GetDiagnostics();
+    const auto now = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(this->unitree_state_mutex);
+        this->unitree_imu_quaternion = frame.imu_quat;
+        this->unitree_imu_gyroscope = frame.imu_gyro;
+        for (size_t i = 0; i < rl_sar::protocol::kBodyJointCount; ++i)
+        {
+            this->unitree_motor_q[i] = frame.leg_q[i];
+            this->unitree_motor_dq[i] = frame.leg_dq[i];
+            this->unitree_motor_tau[i] = frame.leg_tau[i];
+        }
+        this->body_state_seen_ = diag.lowstate_seen;
+        this->body_state_seq_ = diag.lowstate_seq > 0 ? diag.lowstate_seq : frame.header.seq;
+        this->body_state_seq_pending_ = false;
+        if (diag.lowstate_age_us != UINT64_MAX)
+        {
+            this->body_state_stamp_ = now - std::chrono::microseconds(diag.lowstate_age_us);
+        }
+    }
+
+    for (size_t i = 0; i < std::min<size_t>(4, state->imu.quaternion.size()); ++i)
+    {
+        state->imu.quaternion[i] = frame.imu_quat[i];
+    }
+    for (size_t i = 0; i < std::min<size_t>(3, state->imu.gyroscope.size()); ++i)
+    {
+        state->imu.gyroscope[i] = frame.imu_gyro[i];
+    }
+    for (size_t i = 0; i < rl_sar::protocol::kBodyJointCount &&
+                       i < state->motor_state.q.size() &&
+                       i < state->motor_state.dq.size() &&
+                       i < state->motor_state.tau_est.size(); ++i)
+    {
+        state->motor_state.q[i] = frame.leg_q[i];
+        state->motor_state.dq[i] = frame.leg_dq[i];
+        state->motor_state.tau_est[i] = frame.leg_tau[i];
+    }
+
+    this->body_dds_write_ok_runtime_.store(diag.dds_write_ok, std::memory_order_relaxed);
+    return true;
+}
+
+bool RL_Real_Go2X5::SyncArmStateFromAdapter(RobotState<float>* state)
+{
+    if (!state || !this->arx_adapter_active_ || !this->arx_adapter_)
+    {
+        return false;
+    }
+
+    rl_sar::protocol::ArmStateFrame frame;
+    if (!this->arx_adapter_->GetState(frame))
+    {
+        return false;
+    }
+
+    this->HandleArmBridgeStateFrame(frame, "arx_adapter");
+    for (int i = 0; i < this->arm_joint_count &&
+                    i < static_cast<int>(rl_sar::protocol::kArmJointCount); ++i)
+    {
+        const int idx = this->arm_joint_start_index + i;
+        if (idx < 0 || idx >= static_cast<int>(state->motor_state.q.size()))
+        {
+            continue;
+        }
+        state->motor_state.q[static_cast<size_t>(idx)] = frame.q[static_cast<size_t>(i)];
+        state->motor_state.dq[static_cast<size_t>(idx)] = frame.dq[static_cast<size_t>(i)];
+        state->motor_state.tau_est[static_cast<size_t>(idx)] = frame.tau[static_cast<size_t>(i)];
+    }
+    return true;
+}
+
+void RL_Real_Go2X5::UpdateRuntimeDiagnostics(const Go2X5Supervisor::TransitionResult* transition_result)
+{
+    if (!this->diagnostics_publisher_ && !this->drift_recorder_)
+    {
+        return;
+    }
+
+    Go2X5Supervisor::WatchdogStatus watchdog{};
+    Go2X5Supervisor::Mode current_mode = Go2X5Supervisor::Mode::Boot;
+    uint64_t now_ns = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+
+    if (transition_result)
+    {
+        watchdog = transition_result->watchdog;
+        current_mode = transition_result->current_mode;
+        if (transition_result->source_monotonic_ns != 0)
+        {
+            now_ns = transition_result->source_monotonic_ns;
+        }
+    }
+    else if (this->supervisor_)
+    {
+        std::lock_guard<std::mutex> lock(this->supervisor_mutex);
+        const auto input = this->BuildSupervisorInput();
+        watchdog = this->supervisor_->EvaluateWatchdog(input);
+        current_mode = this->supervisor_->mode();
+        now_ns = input.now_monotonic_ns;
+    }
+
+    const auto coordinator_input = this->BuildCoordinatorInput(now_ns);
+    if (this->drift_recorder_ && coordinator_input.has_body_state && coordinator_input.has_arm_state)
+    {
+        this->drift_recorder_->Update(
+            coordinator_input.body_state,
+            coordinator_input.arm_state,
+            rl_sar::diagnostics::CommandContext(
+                static_cast<double>(this->control.x),
+                static_cast<double>(this->control.y),
+                static_cast<double>(this->control.yaw),
+                now_ns));
+    }
+
+    if (this->diagnostics_publisher_)
+    {
+        rl_sar::diagnostics::DiagnosticMetrics metrics;
+        metrics.timestamp_ns = now_ns;
+        metrics.policy_latency_us = watchdog.policy_age_us;
+        metrics.policy_frequency_hz = this->last_policy_inference_hz;
+        metrics.body_state_age_us = watchdog.body_state_age_us;
+        metrics.arm_state_age_us = watchdog.arm_state_age_us;
+        metrics.seq_gap_count = static_cast<int>(watchdog.seq_gap_count);
+        metrics.current_mode = Go2X5Supervisor::ToString(current_mode);
+        metrics.mode_transition_count = this->mode_transition_count_;
+        metrics.arm_tracking_healthy = watchdog.arm_backend_valid && !watchdog.arm_tracking_error_high;
+        {
+            std::lock_guard<std::mutex> metrics_lock(this->runtime_metrics_mutex);
+            metrics.coordinator_jitter_us = this->last_coordinator_jitter_us_;
+            metrics.coordinator_frequency_hz = this->last_coordinator_frequency_hz_;
+        }
+
+        if (coordinator_input.has_arm_state)
+        {
+            double tracking_error_norm = 0.0;
+            for (float value : coordinator_input.arm_state.tracking_error)
+            {
+                tracking_error_norm += static_cast<double>(value) * static_cast<double>(value);
+            }
+            metrics.arm_tracking_error_norm = std::sqrt(tracking_error_norm);
+        }
+
+        if (this->drift_recorder_)
+        {
+            const auto snapshots = this->drift_recorder_->GetSnapshots();
+            if (!snapshots.empty())
+            {
+                const auto& latest = snapshots.back();
+                metrics.xy_drift_error = latest.xy_drift;
+                metrics.yaw_drift_error = latest.yaw_drift;
+            }
+        }
+
+        this->diagnostics_publisher_->UpdateMetrics(metrics);
+    }
+}
+
+void RL_Real_Go2X5::LogSupervisorEvent(const Go2X5Supervisor::TransitionResult& result)
+{
+    if (!this->event_logger_)
+    {
+        return;
+    }
+
+    std::string policy_id;
+    if (this->deploy_manifest_runtime_ && this->deploy_manifest_runtime_->HasManifest())
+    {
+        policy_id = this->deploy_manifest_runtime_->Manifest().meta.policy_id;
+    }
+
+    double arm_tracking_error = 0.0;
+    if (this->arx_adapter_active_ && this->arx_adapter_)
+    {
+        arm_tracking_error = this->arx_adapter_->GetTrackingError();
+    }
+
+    if (result.mode_changed)
+    {
+        ++this->mode_transition_count_;
+        this->event_logger_->LogModeTransition(
+            ToLoggerMode(result.previous_mode),
+            ToLoggerMode(result.current_mode),
+            Go2X5Supervisor::ToString(result.reason_code),
+            static_cast<double>(result.watchdog.body_state_age_us),
+            static_cast<double>(result.watchdog.arm_state_age_us),
+            arm_tracking_error,
+            policy_id);
+    }
+
+    if (result.reason_code != Go2X5Supervisor::ReasonCode::None)
+    {
+        this->event_logger_->LogFault(
+            ToLoggerFault(result.reason_code),
+            Go2X5Supervisor::ToString(result.reason_code),
+            static_cast<double>(result.watchdog.body_state_age_us),
+            static_cast<double>(result.watchdog.arm_state_age_us),
+            arm_tracking_error,
+            policy_id,
+            result.detail_value);
+    }
+}
+
+bool RL_Real_Go2X5::ApplyCoordinatorBodyCommand(
+    const rl_sar::protocol::BodyCommandFrame& frame,
+    RobotCommand<float>* command) const
+{
+    if (!command || frame.joint_count != rl_sar::protocol::kBodyJointCount)
+    {
+        return false;
+    }
+
+    const int num_dofs = this->GetNumDofs();
+    size_t body_idx = 0;
+    for (int joint_idx = 0;
+         joint_idx < num_dofs && body_idx < rl_sar::protocol::kBodyJointCount;
+         ++joint_idx)
+    {
+        if (this->IsArmJointIndex(joint_idx))
+        {
+            continue;
+        }
+        const size_t joint_slot = static_cast<size_t>(joint_idx);
+        command->motor_command.q[joint_slot] = frame.q[body_idx];
+        command->motor_command.dq[joint_slot] = frame.dq[body_idx];
+        command->motor_command.kp[joint_slot] = frame.kp[body_idx];
+        command->motor_command.kd[joint_slot] = frame.kd[body_idx];
+        command->motor_command.tau[joint_slot] = frame.tau[body_idx];
+        ++body_idx;
+    }
+    return body_idx == rl_sar::protocol::kBodyJointCount;
+}
+
+rl_sar::protocol::BodyCommandFrame RL_Real_Go2X5::BuildHoldBodyCommandFrame(
+    const uint64_t now_monotonic_ns,
+    const Go2X5Supervisor::Mode mode) const
+{
+    rl_sar::protocol::BodyCommandFrame frame;
+    frame.header.msg_type = rl_sar::protocol::FrameType::BodyCommand;
+    frame.header.source_monotonic_ns = now_monotonic_ns;
+    frame.header.publish_monotonic_ns = now_monotonic_ns;
+    frame.header.mode = static_cast<uint16_t>(mode);
+    frame.header.validity_flags =
+        rl_sar::protocol::kValidityPayloadValid | rl_sar::protocol::kValidityFallbackGenerated;
+    frame.joint_count = rl_sar::protocol::kBodyJointCount;
+    frame.command_expire_ns = now_monotonic_ns + 15'000'000ULL;
+    if (this->deploy_manifest_runtime_ && this->deploy_manifest_runtime_->HasManifest())
+    {
+        const auto snapshot = this->deploy_manifest_runtime_->Snapshot();
+        if (snapshot.body_command_expire_ms > 0)
+        {
+            frame.command_expire_ns = now_monotonic_ns +
+                static_cast<uint64_t>(snapshot.body_command_expire_ms) * 1'000'000ULL;
+        }
+    }
+
+    const auto default_dof_pos = this->GetDefaultDofPos();
+    const auto fixed_kp = this->GetFixedKp();
+    const auto fixed_kd = this->GetFixedKd();
+    const int num_dofs = this->GetNumDofs();
+    size_t body_idx = 0;
+    for (int joint_idx = 0;
+         joint_idx < num_dofs && body_idx < rl_sar::protocol::kBodyJointCount;
+         ++joint_idx)
+    {
+        if (this->IsArmJointIndex(joint_idx))
+        {
+            continue;
+        }
+
+        const size_t joint_slot = static_cast<size_t>(joint_idx);
+        const float q_ref =
+            joint_slot < default_dof_pos.size() ? default_dof_pos[joint_slot] : 0.0f;
+        const float kp =
+            joint_slot < fixed_kp.size() ? fixed_kp[joint_slot] : 0.0f;
+        const float kd =
+            joint_slot < fixed_kd.size() ? fixed_kd[joint_slot] : 0.0f;
+
+        frame.q[body_idx] = q_ref;
+        frame.dq[body_idx] = 0.0f;
+        frame.kp[body_idx] = kp;
+        frame.kd[body_idx] = kd;
+
+        float tau = 0.0f;
+        if (joint_slot < this->robot_state.motor_state.q.size() &&
+            joint_slot < this->robot_state.motor_state.dq.size())
+        {
+            tau = kp * (q_ref - this->robot_state.motor_state.q[joint_slot]) -
+                  kd * this->robot_state.motor_state.dq[joint_slot];
+        }
+        if (joint_slot < this->whole_body_effort_limits.size() &&
+            std::isfinite(this->whole_body_effort_limits[joint_slot]) &&
+            this->whole_body_effort_limits[joint_slot] > 0.0f)
+        {
+            const float limit = std::fabs(this->whole_body_effort_limits[joint_slot]);
+            tau = std::max(-limit, std::min(limit, tau));
+        }
+        frame.tau[body_idx] = tau;
+        ++body_idx;
+    }
+
+    return frame;
+}
+
+rl_sar::protocol::ArmCommandFrame RL_Real_Go2X5::BuildHoldArmCommandFrame(
+    const uint64_t now_monotonic_ns,
+    const Go2X5Supervisor::Mode mode) const
+{
+    rl_sar::protocol::ArmCommandFrame frame;
+    frame.header.msg_type = rl_sar::protocol::FrameType::ArmCommand;
+    frame.header.source_monotonic_ns = now_monotonic_ns;
+    frame.header.publish_monotonic_ns = now_monotonic_ns;
+    frame.header.mode = static_cast<uint16_t>(mode);
+    frame.header.validity_flags =
+        rl_sar::protocol::kValidityPayloadValid | rl_sar::protocol::kValidityFallbackGenerated;
+    frame.joint_count = static_cast<uint16_t>(this->arm_joint_count);
+    frame.command_expire_ns = now_monotonic_ns + 15'000'000ULL;
+    if (this->deploy_manifest_runtime_ && this->deploy_manifest_runtime_->HasManifest())
+    {
+        const auto snapshot = this->deploy_manifest_runtime_->Snapshot();
+        if (snapshot.arm_command_expire_ms > 0)
+        {
+            frame.command_expire_ns = now_monotonic_ns +
+                static_cast<uint64_t>(snapshot.arm_command_expire_ms) * 1'000'000ULL;
+        }
+    }
+
+    std::vector<float> hold_position;
+    {
+        std::lock_guard<std::mutex> lock(this->arm_command_mutex);
+        hold_position = this->arm_hold_position;
+    }
+    {
+        std::lock_guard<std::mutex> lock(this->arm_external_state_mutex);
+        if (this->arm_external_state_q.size() >= static_cast<size_t>(this->arm_joint_count))
+        {
+            hold_position = this->arm_external_state_q;
+        }
+    }
+
+    const auto fixed_kp = this->GetFixedKp();
+    const auto fixed_kd = this->GetFixedKd();
+    for (int i = 0; i < this->arm_joint_count && i < static_cast<int>(rl_sar::protocol::kArmJointCount); ++i)
+    {
+        const size_t idx = static_cast<size_t>(i);
+        const int joint_idx = this->arm_joint_start_index + i;
+        frame.q[idx] = idx < hold_position.size() ? hold_position[idx] : 0.0f;
+        frame.dq[idx] = 0.0f;
+        frame.tau[idx] = 0.0f;
+        frame.kp[idx] =
+            (joint_idx >= 0 && joint_idx < static_cast<int>(fixed_kp.size()))
+                ? fixed_kp[static_cast<size_t>(joint_idx)]
+                : 0.0f;
+        frame.kd[idx] =
+            (joint_idx >= 0 && joint_idx < static_cast<int>(fixed_kd.size()))
+                ? fixed_kd[static_cast<size_t>(joint_idx)]
+                : 0.0f;
+    }
+    return frame;
+}
+
 void RL_Real_Go2X5::RefreshSupervisorState(const char* source)
 {
     if (!this->supervisor_)
@@ -704,6 +1573,9 @@ void RL_Real_Go2X5::RefreshSupervisorState(const char* source)
                   << " policy_age_us=" << result.watchdog.policy_age_us
                   << std::endl;
     }
+
+    this->LogSupervisorEvent(result);
+    this->UpdateRuntimeDiagnostics(&result);
 }
 
 int RL_Real_Go2X5::GetNumDofs() const
@@ -1098,43 +1970,17 @@ bool RL_Real_Go2X5::ClipWholeBodyCommand(RobotCommand<float> *command, const cha
 void RL_Real_Go2X5::SetupArmCommandSubscriber()
 {
     this->CloseArmCommandIpc();
+    this->SetupArmCommandIpc();
 #if !defined(USE_CMAKE) && defined(USE_ROS)
     if (this->arm_joint_command_topic.empty())
     {
         return;
     }
-    if (!this->enable_ros2_runtime)
-    {
-        std::cout << LOGGER::INFO
-                  << "ROS arm topic subscriber disabled because ROS2 runtime is off. "
-                  << "Expecting localhost IPC relay for " << this->arm_joint_command_topic << "."
-                  << std::endl;
-        this->SetupArmCommandIpc();
-        return;
-    }
-    if (this->arm_joint_command_topic == this->arm_joint_command_topic_active)
-    {
-        return;
-    }
-#if defined(USE_ROS1) && defined(USE_ROS)
-    if (!this->ros1_nh)
-    {
-        return;
-    }
-    this->arm_joint_command_subscriber = this->ros1_nh->subscribe<std_msgs::Float32MultiArray>(
-        this->arm_joint_command_topic, 10, &RL_Real_Go2X5::ArmJointCommandCallback, this);
-#elif defined(USE_ROS2) && defined(USE_ROS)
-    if (!this->ros2_node)
-    {
-        return;
-    }
-    this->arm_joint_command_subscriber = this->ros2_node->create_subscription<std_msgs::msg::Float32MultiArray>(
-        this->arm_joint_command_topic, rclcpp::SystemDefaultsQoS(),
-        [this] (const std_msgs::msg::Float32MultiArray::SharedPtr msg) { this->ArmJointCommandCallback(msg); });
-#endif
     this->arm_joint_command_topic_active = this->arm_joint_command_topic;
-    std::cout << LOGGER::INFO << "arm_joint_command_topic subscribed: "
-              << this->arm_joint_command_topic_active << std::endl;
+    std::cout << LOGGER::INFO
+              << "ROS Float32 arm command fallback disabled. "
+              << "Expecting typed IPC for " << this->arm_joint_command_topic_active << "."
+              << std::endl;
 #endif
 }
 
@@ -1161,6 +2007,7 @@ void RL_Real_Go2X5::SetupArmCommandSubscriber()
 
 void RL_Real_Go2X5::GetState(RobotState<float> *state)
 {
+    this->SyncBodyStateFromAdapter(state);
     std::array<float, 4> imu_quat{};
     std::array<float, 3> imu_gyro{};
     std::array<float, 20> motor_q{};
@@ -1283,6 +2130,53 @@ void RL_Real_Go2X5::SetCommand(const RobotCommand<float> *command)
     RobotCommand<float> command_local = *command;
     this->ClipWholeBodyCommand(&command_local, "Real deploy whole-body command");
 
+    const uint64_t now_monotonic_ns = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    Go2X5Supervisor::Mode supervisor_mode = Go2X5Supervisor::Mode::Boot;
+    rl_sar::protocol::BodyCommandFrame final_body_command =
+        this->BuildHoldBodyCommandFrame(now_monotonic_ns, supervisor_mode);
+    rl_sar::protocol::ArmCommandFrame final_arm_command =
+        this->BuildHoldArmCommandFrame(now_monotonic_ns, supervisor_mode);
+    if (this->coordinator_)
+    {
+        const auto coordinator_input = this->BuildCoordinatorInput(now_monotonic_ns);
+        supervisor_mode = coordinator_input.mode;
+        final_body_command = this->BuildHoldBodyCommandFrame(now_monotonic_ns, supervisor_mode);
+        final_arm_command = this->BuildHoldArmCommandFrame(now_monotonic_ns, supervisor_mode);
+        const auto coordinator_output = this->coordinator_->Step(coordinator_input);
+        {
+            std::lock_guard<std::mutex> metrics_lock(this->runtime_metrics_mutex);
+            const auto now_tick = std::chrono::steady_clock::now();
+            if (this->last_coordinator_tick_.time_since_epoch().count() != 0)
+            {
+                const auto delta_us = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        now_tick - this->last_coordinator_tick_).count());
+                int expected_rate_hz = 200;
+                if (this->deploy_manifest_runtime_ && this->deploy_manifest_runtime_->HasManifest())
+                {
+                    expected_rate_hz = std::max(1, this->deploy_manifest_runtime_->Snapshot().coordinator_rate_hz);
+                }
+                const uint64_t expected_period_us = static_cast<uint64_t>(1'000'000ULL / std::max(1, expected_rate_hz));
+                this->last_coordinator_jitter_us_ =
+                    delta_us > expected_period_us ? (delta_us - expected_period_us) : (expected_period_us - delta_us);
+                this->last_coordinator_frequency_hz_ =
+                    delta_us > 0 ? (1'000'000.0 / static_cast<double>(delta_us)) : 0.0;
+            }
+            this->last_coordinator_tick_ = now_tick;
+        }
+        if (coordinator_output.body_command_valid)
+        {
+            final_body_command = coordinator_output.body_command;
+        }
+        if (coordinator_output.arm_command_valid)
+        {
+            final_arm_command = coordinator_output.arm_command;
+        }
+    }
+    this->ApplyCoordinatorBodyCommand(final_body_command, &command_local);
+
     const int num_dofs = GetNumDofs();
     const auto joint_mapping = GetJointMapping();
     for (int i = 0; i < num_dofs; ++i)
@@ -1318,29 +2212,48 @@ void RL_Real_Go2X5::SetCommand(const RobotCommand<float> *command)
         }
     }
 
-    this->WriteArmCommandToExternal(&command_local);
+    this->WriteArmCommandFrameToExternal(final_arm_command);
 
-    this->unitree_low_command.crc() = Crc32Core((uint32_t *)&unitree_low_command, (sizeof(unitree_go::msg::dds_::LowCmd_) >> 2) - 1);
     bool body_dds_write_ok = false;
-    try
+    if (this->unitree_adapter_active_ && this->unitree_adapter_)
     {
-        if (lowcmd_publisher)
-        {
-            lowcmd_publisher->Write(unitree_low_command);
-            body_dds_write_ok = true;
-        }
-        else
+        const auto set_status = this->unitree_adapter_->SetCommand(final_body_command);
+        const auto process_status =
+            (set_status == rl_sar::adapters::UnitreeAdapter::Status::kOk)
+                ? this->unitree_adapter_->ProcessCommand()
+                : set_status;
+        body_dds_write_ok = (process_status == rl_sar::adapters::UnitreeAdapter::Status::kOk);
+        if (!body_dds_write_ok)
         {
             std::cout << LOGGER::WARNING
-                      << "[SupervisorInput] source=lowcmd_write reason=publisher_unavailable"
+                      << "[SupervisorInput] source=unitree_adapter reason=body_command_write_failed"
                       << std::endl;
         }
     }
-    catch (const std::exception& e)
+    else
     {
-        std::cout << LOGGER::WARNING
-                  << "[SupervisorInput] source=lowcmd_write reason=publish_exception: "
-                  << e.what() << std::endl;
+        this->unitree_low_command.crc() =
+            Crc32Core((uint32_t *)&unitree_low_command, (sizeof(unitree_go::msg::dds_::LowCmd_) >> 2) - 1);
+        try
+        {
+            if (lowcmd_publisher)
+            {
+                lowcmd_publisher->Write(unitree_low_command);
+                body_dds_write_ok = true;
+            }
+            else
+            {
+                std::cout << LOGGER::WARNING
+                          << "[SupervisorInput] source=lowcmd_write reason=publisher_unavailable"
+                          << std::endl;
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cout << LOGGER::WARNING
+                      << "[SupervisorInput] source=lowcmd_write reason=publish_exception: "
+                      << e.what() << std::endl;
+        }
     }
 
     this->body_dds_write_ok_runtime_.store(body_dds_write_ok, std::memory_order_relaxed);
@@ -1475,7 +2388,6 @@ void RL_Real_Go2X5::RunModel()
     }
 
     std::vector<float> arm_hold_local;
-    bool arm_hold_enabled_local = false;
     if (arm_command_size_local > 0)
     {
         std::vector<float> arm_obs_local;
@@ -1485,7 +2397,6 @@ void RL_Real_Go2X5::RunModel()
             auto state = this->CaptureArmCommandStateLocked();
             desired_arm_command = state.arm_joint_command_latest;
             arm_hold_local = state.arm_hold_position;
-            arm_hold_enabled_local = state.arm_hold_enabled;
             if (desired_arm_command.size() != static_cast<size_t>(arm_command_size_local))
             {
                 desired_arm_command = arm_hold_local;
@@ -1504,43 +2415,35 @@ void RL_Real_Go2X5::RunModel()
     }
 
     this->obs.actions = this->Forward();
-    this->ComputeOutput(this->obs.actions, this->output_dof_pos, this->output_dof_vel, this->output_dof_tau);
     this->RecordPolicyInferenceTick();
-
-    bool bridge_state_fresh = true;
-    if (!this->output_dof_pos.empty() && this->arm_split_control_enabled && this->arm_bridge_require_state)
     {
+        std::lock_guard<std::mutex> lock(this->policy_frame_mutex);
+        this->latest_policy_command_valid_ =
+            this->obs.actions.size() == static_cast<size_t>(rl_sar::protocol::kDogJointCount);
+        if (this->latest_policy_command_valid_)
         {
-            std::lock_guard<std::mutex> lock(this->arm_external_state_mutex);
-            bridge_state_fresh = this->IsArmBridgeStateFreshLocked();
+            auto& frame = this->latest_policy_command_frame_;
+            frame = rl_sar::protocol::DogPolicyCommandFrame{};
+            frame.header.msg_type = rl_sar::protocol::FrameType::DogPolicyCommand;
+            frame.header.seq = this->policy_seq_;
+            frame.header.source_monotonic_ns = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    this->last_policy_inference_stamp.time_since_epoch()).count());
+            frame.header.publish_monotonic_ns = frame.header.source_monotonic_ns;
+            frame.header.validity_flags = rl_sar::protocol::kValidityPayloadValid;
+            frame.policy_id_hash = this->deploy_manifest_runtime_
+                ? this->deploy_manifest_runtime_->PolicyIdHash()
+                : 0ULL;
+            frame.action_dim = rl_sar::protocol::kDogJointCount;
+            for (size_t i = 0; i < rl_sar::protocol::kDogJointCount; ++i)
+            {
+                frame.leg_action[i] = this->obs.actions[i];
+            }
         }
     }
-
-    if (!this->output_dof_pos.empty())
-    {
-        Go2X5ArmOutputGuard::Context guard_context;
-        guard_context.num_dofs = GetNumDofs();
-        guard_context.arm_joint_start_index = this->arm_joint_start_index;
-        guard_context.arm_command_size = arm_command_size_local;
-        guard_context.arm_hold_enabled = arm_hold_enabled_local;
-        guard_context.arm_split_control_enabled = this->arm_split_control_enabled;
-        guard_context.arm_bridge_require_state = this->arm_bridge_require_state;
-        guard_context.arm_bridge_state_fresh = bridge_state_fresh;
-        guard_context.arm_hold_position = arm_hold_local;
-        Go2X5ArmOutputGuard::ApplyOutputGuards(
-            &this->output_dof_pos,
-            &this->output_dof_vel,
-            guard_context);
-    }
-
-    if (!this->output_dof_pos.empty() || !this->output_dof_vel.empty() || !this->output_dof_tau.empty())
-    {
-        RLCommandOutput output_cmd;
-        output_cmd.pos = this->output_dof_pos;
-        output_cmd.vel = this->output_dof_vel;
-        output_cmd.tau = this->output_dof_tau;
-        output_cmd_queue.push(std::move(output_cmd));
-    }
+    this->output_dof_pos.clear();
+    this->output_dof_vel.clear();
+    this->output_dof_tau.clear();
 
     // this->TorqueProtect(this->output_dof_tau);
     // this->AttitudeProtect(this->robot_state.imu.quaternion, 75.0f, 75.0f);
@@ -1716,8 +2619,6 @@ uint32_t RL_Real_Go2X5::Crc32Core(uint32_t *ptr, uint32_t len)
 // - HandleArmJointCommandData
 // - HandleArmBridgeStateData
 // - CmdvelCallback
-// - ArmJointCommandCallback
-// - ArmBridgeStateCallback
 
 volatile sig_atomic_t g_shutdown_requested_go2_x5 = 0;
 

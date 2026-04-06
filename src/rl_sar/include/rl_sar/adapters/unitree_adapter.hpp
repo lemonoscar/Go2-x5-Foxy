@@ -2,6 +2,7 @@
 #define RL_SAR_ADAPTERS_UNITREE_ADAPTER_HPP
 
 #include "rl_sar/protocol/go2_x5_protocol.hpp"
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -67,8 +68,16 @@ public:
         /// Number of leg DOFs (12 for Go2)
         uint16_t leg_dof_count = 12;
 
+        /// Mapping from typed body joint slot [0, 11] to Unitree motor slot.
+        std::array<int, protocol::kDogJointCount> joint_mapping{
+            {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
+        };
+
         /// Source ID for frame headers
         uint32_t source_id = 0;
+
+        /// Whether ChannelFactory::Init should be performed by the adapter.
+        bool initialize_channel_factory = true;
     };
 
     /**
@@ -217,9 +226,11 @@ private:
     // Internal command conversion helpers
     void ConvertBodyCommandToLowCmd(const protocol::BodyCommandFrame& body_cmd);
     void InitializeLowCmd();
+    int ResolveMotorIndexForBodyJoint(int body_joint_index) const;
+    static uint32_t ComputeLowCmdCrc(const unitree_go::msg::dds_::LowCmd_& cmd);
 
     // Sequence tracking
-    void IncrementLowstateSeq();
+    uint64_t IncrementLowstateSeq();
 
     // Monotonic time utility
     static uint64_t GetMonotonicNs();

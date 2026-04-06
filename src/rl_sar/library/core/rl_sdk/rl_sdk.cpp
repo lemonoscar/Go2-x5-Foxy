@@ -749,6 +749,11 @@ bool RLFSMState::Interpolate(
 
 void RLFSMState::RLControl()
 {
+    if (!rl.legacy_rl_output_path_enabled)
+    {
+        return;
+    }
+
     RLCommandOutput output;
     bool has_output = false;
     while (rl.output_cmd_queue.try_pop(output))

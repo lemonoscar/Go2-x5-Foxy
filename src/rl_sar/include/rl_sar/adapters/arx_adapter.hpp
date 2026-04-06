@@ -225,7 +225,7 @@ private:
         std::chrono::steady_clock::time_point stamp; ///< Timestamp
         bool from_backend = false;         ///< True if from ARX backend
 
-        InternalState() : stamp(std::chrono::steady_clock::now()) {}
+        InternalState() = default;
     };
 
     /**
@@ -289,6 +289,7 @@ private:
 
     // ARX SDK handle (opaque pointer for ABI stability)
     void* arx_sdk_handle_ = nullptr;
+    void* arx_solver_handle_ = nullptr;
 
     // ARX backend interface pointers (function pointers from SDK)
     struct ArxVTable

@@ -1,5 +1,6 @@
 
 #include "rl_real_go2_x5.hpp"
+#include "rl_sar/go2x5/state/go2_x5_state_manager.hpp"
 #include <cmath>
 #include <mutex>
 
@@ -267,41 +268,4 @@ void RL_Real_Go2X5::CmdvelCallback(
     this->cmd_vel_filtered.angular.z = a * msg->angular.z + (1.0f - a) * this->cmd_vel_filtered.angular.z;
 }
 
-void RL_Real_Go2X5::ArmJointCommandCallback(
-#if defined(USE_ROS1) && defined(USE_ROS)
-    const std_msgs::Float32MultiArray::ConstPtr &msg
-#elif defined(USE_ROS2) && defined(USE_ROS)
-    const std_msgs::msg::Float32MultiArray::SharedPtr msg
-#endif
-)
-{
-    if (!msg)
-    {
-        return;
-    }
-    this->HandleArmJointCommandData(msg->data, this->arm_joint_command_topic.c_str());
-}
-
-void RL_Real_Go2X5::ArmBridgeStateCallback(
-#if defined(USE_ROS1) && defined(USE_ROS)
-    const std_msgs::Float32MultiArray::ConstPtr &msg
-#elif defined(USE_ROS2) && defined(USE_ROS)
-    const std_msgs::msg::Float32MultiArray::SharedPtr msg
-#endif
-)
-{
-    if (!msg)
-    {
-        return;
-    }
-    bool state_from_backend = false;
-    const size_t n = static_cast<size_t>(std::max(0, this->arm_joint_count));
-    std::vector<float> payload = msg->data;
-    if (msg->data.size() == (3 * n + 1) || msg->data.size() == (n + 1))
-    {
-        state_from_backend = msg->data.back() > 0.5f;
-        payload.pop_back();
-    }
-    this->HandleArmBridgeStateData(payload, state_from_backend, "Arm bridge state");
-}
 #endif

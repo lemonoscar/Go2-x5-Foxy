@@ -385,6 +385,7 @@ TEST_F(ArxAdapterContract, StatsInitialState)
     EXPECT_EQ(stats.send_failures, 0);
     EXPECT_EQ(stats.state_timeouts, 0);
     EXPECT_EQ(stats.servo_loops, 0);
+    EXPECT_FALSE(stats.backend_healthy);
 }
 
 // ============================================================================
@@ -461,7 +462,8 @@ TEST_F(ArxAdapterContract, EmptyCanInterface)
 
     bool success = adapter_->Initialize(config);
 
-    // May fail or succeed depending on implementation
+    EXPECT_TRUE(success);
+    EXPECT_TRUE(adapter_->IsInitialized());
 }
 
 TEST_F(ArxAdapterContract, CustomModelString)

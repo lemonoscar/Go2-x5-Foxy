@@ -268,6 +268,7 @@ public:
     // runtime arm lock pose (captured after get-up)
     std::vector<float> arm_lock_pose_runtime;
     bool arm_lock_pose_runtime_valid = false;
+    bool legacy_rl_output_path_enabled = true;
 
     // thread safety
     std::mutex model_mutex;

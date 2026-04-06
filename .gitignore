@@ -1,56 +1,68 @@
-# CMake
-build
-devel
-logs
-install
-log
-.catkin_tools
-cmake_build
-package.xml
+# ========================
+# Local-only docs
+# ========================
+/AGENT.md
+/Instruction.md
 
-# Rust
-rust_build
-Cargo.lock
+# ========================
+# Build outputs
+# ========================
+/build/
+/install/
+/log/
+/logs/
+/devel/
+/.catkin_tools/
+/cmake_build/
+/cmake_build*/
+/src/rl_sar/build/
+/src/rl_sar/package.xml
 
-# Python
-__pycache__
-
-# IDE
-.vscode
-
-# OS
-.DS_Store
-Thumbs.db
-
-# ROS/Gazebo
-.ros
+# ========================
+# Runtime artifacts
+# ========================
+/.ros/
 *.bag
 *.db3
 *.log
 *.ogv
 *.mp4
 *.avi
-
-# Interface
-onnxruntime
-libtorch
-
-# Mujoco
-mujoco
 MUJOCO_LOG.TXT
 
-# Data
-.cache
-*.json
+# ========================
+# Model artifacts
+# ========================
+/policy.pt
+/policy.onnx
+*.pt
+*.onnx
 
-# temp
+# ========================
+# Downloaded runtimes / caches
+# ========================
+/library/
+/onnxruntime/
+/libtorch/
+/.cache/
+
+# ========================
+# Python
+# ========================
+__pycache__/
+*.pyc
+
+# ========================
+# IDE / OS
+# ========================
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ========================
+# Temp archives
+# ========================
 *.zip
 *.tgz
 *.tar.gz
 temp_extract*/
-
-# Agent instructions
-AGENT.md
-
-# robot descriptions
-rl_sar_zoo

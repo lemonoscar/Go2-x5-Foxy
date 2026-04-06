@@ -27,9 +27,6 @@ else()
     add_compile_definitions(USE_CMAKE)
 endif()
 
-# MuJoCo simulator option
-set(USE_MUJOCO OFF CACHE BOOL "Build with MuJoCo simulator support")
-
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -50,24 +47,14 @@ add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 if(NOT USE_CMAKE)
     if($ENV{ROS_DISTRO} MATCHES "foxy")
         find_package(ament_cmake REQUIRED)
-        find_package(joint_state_broadcaster REQUIRED)
-        find_package(robot_state_publisher REQUIRED)
         find_package(rclcpp REQUIRED)
-        find_package(gazebo_ros REQUIRED)
         find_package(std_msgs REQUIRED)
-        find_package(sensor_msgs REQUIRED)
-        find_package(robot_msgs REQUIRED)
-        find_package(robot_joint_controller REQUIRED)
         find_package(rclpy REQUIRED)
-        find_package(gazebo_msgs REQUIRED)
-        find_package(std_srvs REQUIRED)
         find_package(geometry_msgs REQUIRED)
         ament_package()
     else()
         message(FATAL_ERROR "rl_ras_n supports ROS2 Foxy only. Current ROS_DISTRO=$ENV{ROS_DISTRO}")
     endif()
-    add_compile_options(${GAZEBO_CXX_FLAGS})
-    find_package(gazebo REQUIRED)
 endif()
 
 # Inference Runtime
@@ -262,7 +249,14 @@ endif()
 set(UNITREE_SDK2_AVAILABLE OFF)
 set(UNITREE_SDK2_THIRDPARTY_INCLUDE "")
 set(UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE "")
-set(UNITREE_SDK2_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_sdk2" CACHE PATH
+set(_DEFAULT_UNITREE_SDK2_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_sdk2")
+if(NOT EXISTS "${_DEFAULT_UNITREE_SDK2_ROOT}/CMakeLists.txt")
+    set(_WORKSPACE_UNITREE_SDK2_ROOT "${PROJECT_ROOT_DIR}/../unitree_sdk2")
+    if(EXISTS "${_WORKSPACE_UNITREE_SDK2_ROOT}/CMakeLists.txt")
+        set(_DEFAULT_UNITREE_SDK2_ROOT "${_WORKSPACE_UNITREE_SDK2_ROOT}")
+    endif()
+endif()
+set(UNITREE_SDK2_ROOT "${_DEFAULT_UNITREE_SDK2_ROOT}" CACHE PATH
     "Path to a Unitree SDK2 checkout")
 if(SYSTEM_TYPE STREQUAL "Linux")
     if(EXISTS "${UNITREE_SDK2_ROOT}/CMakeLists.txt")
@@ -309,6 +303,7 @@ if(NOT USE_CMAKE)
 endif()
 
 include_directories(
+    .
     include
     include/rl_sar
     include/rl_sar/core
@@ -426,36 +421,6 @@ if(NOT USE_CMAKE)
     endif()
 endif()
 
-# executable for rl sim
-if(NOT USE_CMAKE)
-    add_executable(rl_sim src/rl_sar/core/rl_sim.cpp)
-    target_link_libraries(rl_sim
-        rl_sdk
-        observation_buffer
-        ${YAML_CPP_LIBRARIES}
-        Threads::Threads
-    )
-    if(FALSE)
-        target_link_libraries(rl_sim ${catkin_LIBRARIES})
-    elseif($ENV{ROS_DISTRO} MATCHES "foxy")
-        ament_target_dependencies(rl_sim
-            joint_state_broadcaster
-            robot_state_publisher
-            rclcpp
-            gazebo_ros
-            std_msgs
-            sensor_msgs
-            robot_msgs
-            robot_joint_controller
-            rclpy
-            gazebo_msgs
-            std_srvs
-            geometry_msgs
-        )
-        install(TARGETS rl_sim DESTINATION lib/${PROJECT_NAME})
-    endif()
-endif()
-
 # executable for rl real a1 (removed - only go2-x5 supported)
 
 # executable for rl real lite3 (removed - only go2-x5 supported)
@@ -495,6 +460,7 @@ if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
         src/rl_sar/go2x5/state/go2_x5_utility.cpp
         # Runtime
         src/rl_sar/protocol/go2_x5_protocol.cpp
+        src/rl_sar/runtime/coordinator/go2_x5_coordinator.cpp
         src/rl_sar/runtime/supervisor/go2_x5_supervisor.cpp
         # Diagnostics
         src/rl_sar/diagnostics/diagnostics_publisher.cpp
@@ -511,6 +477,7 @@ if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
     )
     target_link_libraries(rl_real_go2_x5
         unitree_sdk2
+        arx_adapter
         rl_sdk
         observation_buffer
         event_logger
@@ -546,13 +513,11 @@ endif()
 if(NOT USE_CMAKE)
     if(FALSE)
         catkin_install_python(PROGRAMS
-            scripts/actuator_net.py
             scripts/arx_x5_bridge.py
             DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
         )
     elseif($ENV{ROS_DISTRO} MATCHES "foxy")
         install(PROGRAMS
-            scripts/actuator_net.py
             scripts/arx_x5_bridge.py
             DESTINATION lib/${PROJECT_NAME}
         )
@@ -562,135 +527,14 @@ endif()
 if(NOT USE_CMAKE)
     if($ENV{ROS_DISTRO} MATCHES "foxy")
         install(
-            DIRECTORY launch worlds ${PROJECT_ROOT_DIR}/policy
-            DESTINATION share/${PROJECT_NAME}/${dir}
+            DIRECTORY launch
+            DESTINATION share/${PROJECT_NAME}
+        )
+        install(
+            DIRECTORY ${PROJECT_ROOT_DIR}/deploy ${PROJECT_ROOT_DIR}/policy
+            DESTINATION share/${PROJECT_NAME}
         )
     endif()
-endif()
-
-# ========================
-# mujoco
-# ========================
-if(USE_MUJOCO)
-    add_compile_definitions(USE_MUJOCO)
-    set(MUJOCO_DIR "${PROJECT_ROOT_DIR}/library/mujoco")
-
-    # Check MuJoCo installation (different paths for different platforms)
-    if(SYSTEM_TYPE STREQUAL "Darwin")
-        # macOS uses framework structure
-        if(NOT EXISTS "${MUJOCO_DIR}/Headers/mujoco.h")
-            message(FATAL_ERROR "MuJoCo not found. Please run: bash scripts/download_mujoco.sh")
-        endif()
-
-        # Create compatible include structure in build directory for macOS
-        # This allows <mujoco/mujoco.h> to work on macOS where headers are in Headers/ directory
-        set(MUJOCO_COMPAT_INCLUDE_DIR "${CMAKE_BINARY_DIR}/mujoco_include")
-        file(MAKE_DIRECTORY "${MUJOCO_COMPAT_INCLUDE_DIR}/mujoco")
-        file(GLOB MUJOCO_HEADERS "${MUJOCO_DIR}/Headers/*.h")
-        file(COPY ${MUJOCO_HEADERS} DESTINATION "${MUJOCO_COMPAT_INCLUDE_DIR}/mujoco")
-
-        set(MUJOCO_INCLUDE_DIR "${MUJOCO_COMPAT_INCLUDE_DIR}")
-        set(MUJOCO_LIB_DIR "${MUJOCO_DIR}/Versions/Current")
-    else()
-        # Linux/Windows use standard structure
-        if(NOT EXISTS "${MUJOCO_DIR}/include/mujoco/mujoco.h")
-            message(FATAL_ERROR "MuJoCo not found. Please run: bash scripts/download_mujoco.sh")
-        endif()
-        set(MUJOCO_INCLUDE_DIR "${MUJOCO_DIR}/include")
-        set(MUJOCO_LIB_DIR "${MUJOCO_DIR}/lib")
-    endif()
-
-    # Add MuJoCo library path to global RPATH
-    set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${MUJOCO_LIB_DIR}")
-    message(STATUS "Added MuJoCo to RPATH: ${MUJOCO_LIB_DIR}")
-
-    # Find GLFW
-    find_package(glfw3 REQUIRED)
-
-    # Platform-specific library names
-    if(SYSTEM_TYPE STREQUAL "Linux")
-        set(MUJOCO_LIB_NAME "libmujoco.so.3.2.7")
-    elseif(SYSTEM_TYPE STREQUAL "Darwin")
-        set(MUJOCO_LIB_NAME "libmujoco.3.2.7.dylib")
-    elseif(SYSTEM_TYPE STREQUAL "Windows")
-        set(MUJOCO_LIB_NAME "mujoco.dll")
-    else()
-        message(FATAL_ERROR "Unsupported platform: ${SYSTEM_TYPE}")
-    endif()
-
-    # Import MuJoCo library with RPATH
-    add_library(mujoco_prebuilt SHARED IMPORTED)
-    set_target_properties(mujoco_prebuilt PROPERTIES
-        IMPORTED_LOCATION "${MUJOCO_LIB_DIR}/${MUJOCO_LIB_NAME}"
-        INTERFACE_INCLUDE_DIRECTORIES "${MUJOCO_INCLUDE_DIR}"
-        IMPORTED_NO_SONAME TRUE
-    )
-
-    # Include directories
-    include_directories(
-        ${MUJOCO_INCLUDE_DIR}
-        library/thirdparty/joystick
-    )
-
-    # Source files
-    file(GLOB MUJOCO_SIMULATE_SRC library/thirdparty/mujoco_simulate/*.cc)
-    set(JOYSTICK_SRC library/thirdparty/joystick/joystick.cc)
-
-    # On macOS, also include Objective-C++ files for CoreVideo support
-    if(SYSTEM_TYPE STREQUAL "Darwin")
-        file(GLOB MUJOCO_SIMULATE_MM library/thirdparty/mujoco_simulate/*.mm)
-        list(APPEND MUJOCO_SIMULATE_SRC ${MUJOCO_SIMULATE_MM})
-    endif()
-
-    # Build executable
-    add_executable(rl_sim_mujoco src/rl_sar/core/rl_sim_mujoco.cpp ${MUJOCO_SIMULATE_SRC} ${JOYSTICK_SRC})
-
-    # Suppress deprecation warnings for macOS 15.0 API changes in MuJoCo Simulate
-    if(SYSTEM_TYPE STREQUAL "Darwin")
-        set_source_files_properties(
-            ${MUJOCO_SIMULATE_MM}
-            PROPERTIES COMPILE_FLAGS "-Wno-deprecated-declarations"
-        )
-    endif()
-
-    # Add include directories for mujoco_simulate and joystick headers
-    target_include_directories(rl_sim_mujoco PRIVATE
-        library/thirdparty/mujoco_simulate
-        library/thirdparty/joystick
-    )
-
-    target_link_libraries(rl_sim_mujoco
-        rl_sdk observation_buffer ${YAML_CPP_LIBRARIES}
-        Threads::Threads mujoco_prebuilt glfw
-    )
-    if(NOT USE_CMAKE)
-        if(FALSE)
-            target_link_libraries(rl_sim_mujoco ${catkin_LIBRARIES})
-        elseif($ENV{ROS_DISTRO} MATCHES "foxy")
-            ament_target_dependencies(rl_sim_mujoco
-                rclcpp
-                std_msgs
-            )
-        endif()
-    endif()
-
-    # macOS specific frameworks and libraries
-    if(SYSTEM_TYPE STREQUAL "Darwin")
-        # OpenMP support
-        if(OPENMP_LIBRARIES)
-            target_link_libraries(rl_sim_mujoco ${OPENMP_LIBRARIES})
-        endif()
-
-        # Required frameworks for GlfwCoreVideo
-        target_link_libraries(rl_sim_mujoco
-            "-framework CoreVideo"
-            "-framework OpenGL"
-            "-framework AppKit"
-        )
-    endif()
-
-    install(TARGETS rl_sim_mujoco DESTINATION bin)
-    message(STATUS "MuJoCo configured: ${MUJOCO_DIR}")
 endif()
 
 # ========================
@@ -832,8 +676,14 @@ if(USE_CMAKE AND BUILD_TESTING)
             ${UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE}
         )
         target_link_libraries(test_unitree_adapter_contract
+            gtest
+            gtest_main
             unitree_sdk2
             Threads::Threads
+        )
+        set_target_properties(test_unitree_adapter_contract PROPERTIES
+            BUILD_RPATH "${CMAKE_INSTALL_RPATH};${UNITREE_SDK2_ROOT}/thirdparty/lib/${ARCH_DIR};${UNITREE_SDK2_ROOT}/lib/${ARCH_DIR}"
+            INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${UNITREE_SDK2_ROOT}/thirdparty/lib/${ARCH_DIR};${UNITREE_SDK2_ROOT}/lib/${ARCH_DIR}"
         )
         target_compile_definitions(test_unitree_adapter_contract PRIVATE UNITREE_SDK2_AVAILABLE)
         add_test(NAME test_unitree_adapter_contract COMMAND test_unitree_adapter_contract)
@@ -928,9 +778,5 @@ if(USE_TORCH)
     endif()
 endif()
 message(STATUS "----------------------------------------")
-message(STATUS "Simulator Configuration:")
-message(STATUS "USE_MUJOCO: ${USE_MUJOCO}")
-if(USE_MUJOCO)
-    message(STATUS "MuJoCo: Enabled")
-endif()
+message(STATUS "Mode: sim2real only")
 message(STATUS "========================================")

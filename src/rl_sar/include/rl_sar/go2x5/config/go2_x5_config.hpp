@@ -2,6 +2,8 @@
 #ifndef GO2_X5_CONFIG_HPP
 #define GO2_X5_CONFIG_HPP
 
+#include <algorithm>
+#include <cctype>
 #include "library/core/config/config_loader.hpp"
 #include <string>
 #include <vector>
@@ -180,8 +182,20 @@ public:
         return loader_.Get<std::vector<float>>("joint_effort_limits", {});
     }
 
+    std::vector<float> GetJointKpLimits() const {
+        return loader_.Get<std::vector<float>>("joint_kp_limits", {});
+    }
+
+    std::vector<float> GetJointKdLimits() const {
+        return loader_.Get<std::vector<float>>("joint_kd_limits", {});
+    }
+
     std::vector<float> GetTorqueLimits() const {
         return loader_.Get<std::vector<float>>("torque_limits", {});
+    }
+
+    std::vector<std::string> GetJointNames() const {
+        return loader_.Get<std::vector<std::string>>("joint_names", {});
     }
 
     std::vector<float> GetArmJointLowerLimits() const {

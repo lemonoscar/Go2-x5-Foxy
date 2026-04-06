@@ -1,319 +1,60 @@
-# go2-x5-foxy
+# rl_ras_n
 
-ROS2 Foxy deployment repository for Unitree **Go2** and **Go2-X5** (sim + real).
+`rl_ras_n` 现在只保留 `Go2-X5 sim2real` 主路径。
 
-## Primary Entry
+当前仓库目标：
+- Jetson NX
+- Ubuntu 20.04
+- ROS2 Foxy
+- Go2 dog-only PPO
+- external arm pipeline
+- hybrid coordinator
 
-This README is the source-of-truth entry for repository usage and runtime startup.
+## 保留内容
 
-- `README.md`: main entry for build, sim, and real-deploy usage
-- `Instruction.md`: detailed environment and bringup checklist
-- `In.md`: minimal quick-start and operator flow notes
-- `rl_sar.md`: change log and historical deployment notes
+- `deploy/`：真机 deploy manifest
+- `src/rl_sar/`：真实运行时、protocol、supervisor、coordinator、adapter
+- `policy/go2_x5/`：Go2-X5 策略配置
+- `scripts/setup_arx_can.sh`：机械臂 CAN 启动
+- `Instruction.md`：最小上机清单
 
+## 已删除方向
 
-## Scope
+- Gazebo
+- MuJoCo
+- sim2sim
+- 非 Go2-X5 机器人描述与控制包
 
-This repository is intentionally trimmed for deployment stability and size:
-
-- Supported robots: `go2`, `go2_x5`
-- Supported ROS distro: `foxy`
-- Kept policy data:
-  - `policy/go2/`
-  - `policy/go2_x5/`
-- Removed policy data for other robots.
-
-Generated artifacts are not source:
-
-- `build/`
-- `install/`
-- `cmake_build/`
-- `log/`
-
-
-## Environment
-
-Recommended runtime target: **Jetson** (Ubuntu 20.04 + ROS2 Foxy).
-
-Minimum dependencies:
-
-```bash
-sudo apt update
-sudo apt install -y cmake g++ build-essential libyaml-cpp-dev libeigen3-dev \
-  libboost-all-dev libspdlog-dev libfmt-dev libtbb-dev liblcm-dev
-```
-
-ROS setup:
+## 构建
 
 ```bash
 source /opt/ros/foxy/setup.bash
-```
-
-## Build
-
-### Standard ROS build (recommended)
-
-```bash
 cd /home/lemon/Issac/rl_ras_n
 ./build.sh
 source /home/lemon/Issac/rl_ras_n/install/setup.bash
 ```
 
-`build.sh` in this fork is Foxy-only.
-
-### Standalone CMake build (hardware-focused tools)
+如果需要单独做硬件向 CMake 构建：
 
 ```bash
 cd /home/lemon/Issac/rl_ras_n
-cmake -S src/rl_sar -B cmake_build -DUSE_CMAKE=ON
-cmake --build cmake_build -j$(nproc)
+./build.sh --cmake
 ```
 
-## Gazebo Simulation
-
-Terminal 1:
-
-```bash
-source /opt/ros/foxy/setup.bash
-source /home/lemon/Issac/rl_ras_n/install/setup.bash
-ros2 launch rl_sar gazebo.launch.py rname:=go2_x5
-```
-
-Terminal 2:
-
-```bash
-source /opt/ros/foxy/setup.bash
-source /home/lemon/Issac/rl_ras_n/install/setup.bash
-ros2 run rl_sar rl_sim
-```
-
-## Go2-X5 Real Robot
-
-### ARX arm CAN bringup
-
-Based on the latest `logs.md`, the most common field failure is not the ROS graph itself, but SocketCAN bringup plus missing arm power/CAN response. Bring up CAN before starting the dual-process stack:
-
-```bash
-cd /home/lemon/Issac/rl_ras_n
-./scripts/setup_arx_can.sh /dev/ttyACM0 can0 8
-```
-
-Equivalent env-driven form:
-
-```bash
-cd /home/lemon/Issac/rl_ras_n
-CAN_DEV=/dev/ttyACM0 CAN_IF=can0 SLCAN_SPEED_CODE=8 ./scripts/setup_arx_can.sh
-```
-
-If `ip -s -d link show can0` keeps reporting `RX=0`, the issue is still on the arm power/CAN wiring/adapter side, not the higher-level sim2real stack.
-
-### Single process
-
-```bash
-source /opt/ros/foxy/setup.bash
-source /home/lemon/Issac/rl_ras_n/install/setup.bash
-/home/lemon/Issac/rl_ras_n/install/lib/rl_sar/rl_real_go2_x5 eth0
-```
-
-### Dual process (leg + arm bridge)
+## 启动
 
 ```bash
 source /opt/ros/foxy/setup.bash
 source /home/lemon/Issac/rl_ras_n/install/setup.bash
 export ARX5_SDK_ROOT=/home/unitree/arx5-sdk
+
 ros2 launch rl_sar go2_x5_real_dual.launch.py \
   network_interface:=eth0 \
-  arm_interface_name:=can0 \
-  bridge_rmw_implementation:=rmw_cyclonedds_cpp \
-  go2_rmw_implementation:=rmw_fastrtps_cpp
+  arm_interface_name:=can0
 ```
 
-The default dual-process launch now falls back to `shadow-only mode` when the arm SDK/backend is unavailable, instead of letting a failed native init kill the whole software chain. Recommended bringup sequence:
+## 入口文档
 
-1. Run a software smoke test with `arm_dry_run:=true`.
-2. Switch to strict real-arm mode and require both SDK availability and a valid initial state.
-
-Default dual-process launch behavior:
-
-- the launch file now starts the X5 bridge in writable mode (`arm_accept_commands:=true`)
-- when `go2_enable_ros2_runtime:=false`, `/arm_joint_pos_cmd` is relayed to `rl_real_go2_x5` over localhost UDP instead of DDS
-- for a read-only inspection run, override `arm_accept_commands:=false`
-
-### Software smoke test (no arm hardware required)
-
-```bash
-source /opt/ros/foxy/setup.bash
-source /home/lemon/Issac/rl_ras_n/install/setup.bash
-ros2 launch rl_sar go2_x5_real_dual.launch.py \
-  network_interface:=eth0 \
-  arm_interface_name:=can0 \
-  arm_dry_run:=true \
-  bridge_rmw_implementation:=rmw_cyclonedds_cpp \
-  go2_rmw_implementation:=rmw_fastrtps_cpp
-```
-
-### Strict real-arm mode
-
-```bash
-source /opt/ros/foxy/setup.bash
-source /home/lemon/Issac/rl_ras_n/install/setup.bash
-export ARX5_SDK_ROOT=/home/unitree/arx5-sdk
-ros2 launch rl_sar go2_x5_real_dual.launch.py \
-  network_interface:=eth0 \
-  arm_interface_name:=can0 \
-  arm_require_sdk:=true \
-  arm_require_initial_state:=true \
-  bridge_rmw_implementation:=rmw_cyclonedds_cpp \
-  go2_rmw_implementation:=rmw_fastrtps_cpp
-```
-
-## Runtime Controls (RL process)
-
-- `0`: Get up
-- `1`: Enter RL locomotion
-  - current `go2_x5/robot_lab/config.yaml`: uses `fixed_cmd_*`
-  - set `key1_prefer_navigation_mode: true` to enable `/cmd_vel`
-- `9`: Get down
-- `P`: Passive mode
-- `W/A/S/D/Q/E`: velocity commands
-- `Space`: clear velocity
-- `N`: toggle `/cmd_vel` navigation mode (manual override)
-
-Go2-X5 arm shortcuts:
-
-- `2`: if `key2_prefer_topic_command: true`, hold arm at latest `/arm_joint_pos_cmd`; otherwise use `arm_key_pose` then `arm_hold_pose`
-- `3`: restore default arm pose
-- `4`: arm hold ON/OFF
-
-Default real deployment now uses `arm_hold_enabled: true` and `arm_lock: false`:
-
-- without `2`, the arm stays at `arm_hold_pose`
-- publish `/arm_joint_pos_cmd`, then press `2` to replace the hold target with that 6-DoF arm pose only when `key2_prefer_topic_command: true`
-- if the main process keeps warning `Arm bridge state is missing or stale`, the arm stays in shadow/hold and does not follow live bridge state
-
-## Go2-X5 Sim2Real Key Flow
-
-Target flow for deployment:
-
-1. Press `0` -> robot gets up.
-2. Press `1` -> enter RL state; command source depends on `key1_prefer_navigation_mode`.
-3. Wait until the main process prints `Arm bridge state stream detected`, then publish `/arm_joint_pos_cmd` and press `2`.
-   If `key2_prefer_topic_command: true`, the arm moves/holds at that published target.
-   If `key2_prefer_topic_command: false`, Key[2] uses `arm_key_pose` / `arm_hold_pose` instead.
-4. Press `3` -> arm returns to default pose.
-
-## Minimal Reproducible Sim2Real (Jetson, Go2-X5)
-
-Assumptions:
-
-- Jetson is connected to Go2 via `eth0`.
-- X5 arm CAN interface is `can0`.
-- `ARX5_SDK_ROOT` is available (example: `/home/unitree/arx5-sdk`).
-- Repository has been built by `./build.sh`.
-
-First bring up CAN:
-
-```bash
-cd /home/lemon/Issac/rl_ras_n
-./scripts/setup_arx_can.sh /dev/ttyACM0 can0 8
-```
-
-Terminal 1 (start real deployment, leg + arm bridge):
-
-```bash
-source /opt/ros/foxy/setup.bash
-source /home/lemon/Issac/rl_ras_n/install/setup.bash
-export ARX5_SDK_ROOT=/home/unitree/arx5-sdk
-ros2 launch rl_sar go2_x5_real_dual.launch.py \
-  network_interface:=eth0 \
-  arm_interface_name:=can0 \
-  arm_require_sdk:=true \
-  arm_require_initial_state:=true \
-  bridge_rmw_implementation:=rmw_cyclonedds_cpp \
-  go2_rmw_implementation:=rmw_fastrtps_cpp
-```
-
-Terminal 2 (publish locomotion command):
-
-```bash
-source /opt/ros/foxy/setup.bash
-source /home/lemon/Issac/rl_ras_n/install/setup.bash
-ros2 topic pub /cmd_vel geometry_msgs/msg/Twist \
-  "{linear: {x: 0.20, y: 0.00, z: 0.00}, angular: {x: 0.00, y: 0.00, z: 0.00}}" -r 20
-```
-
-Terminal 3 (publish arm target):
-
-```bash
-source /opt/ros/foxy/setup.bash
-source /home/lemon/Issac/rl_ras_n/install/setup.bash
-ros2 topic pub /arm_joint_pos_cmd std_msgs/msg/Float32MultiArray \
-  "{data: [0.8, 2.4, 1.6, 0.0, 0.3, 0.3]}" -r 10
-```
-
-Keyboard actions on Terminal 1 (strict order):
-
-1. Press `0` (get up).
-2. Press `1` (enter RL, default uses `/cmd_vel`).
-3. Press `2` (arm takes latest `/arm_joint_pos_cmd` target).
-4. Press `3` (arm restore default pose).
-
-Safe takeover (Ctrl+C):
-
-- Press `Ctrl+C` in Terminal 1 to stop deployment.
-- Runtime performs a graceful exit sequence before handing control back:
-  - smooth leg soft-landing to lying pose
-  - arm retract to `arm_shutdown_pose` (fallback: `arm_hold_pose`)
-  - restore built-in motion service (`normal/sport_mode`)
-- Tunable params (`policy/go2_x5/robot_lab/config.yaml`):
-  - `shutdown_soft_land_sec`
-  - `shutdown_hold_sec`
-  - `arm_shutdown_pose`
-
-Quick checks:
-
-```bash
-ros2 topic hz /arx_x5/joint_state
-ros2 topic echo --once /arx_x5/joint_cmd
-```
-
-Troubleshooting:
-
-- No output from `candump can0`, and `ip -s -d link show can0` stays at `RX=0`: check arm power, CAN wiring, SLCAN speed code, and the USB-CAN adapter first.
-- If the bridge reports `shadow-only mode`, the ROS side is alive but arm SDK/bus handshake did not succeed.
-- `/arm_joint_pos_cmd` now requires a full 6-DoF target in one message; short messages are ignored to avoid half-stale arm targets.
-- If the main process logs `Key[2] ignoring latest /arm_joint_pos_cmd because key2_prefer_topic_command=false`, the topic relay is working but the current policy config is intentionally bypassing topic-driven arm hold.
-
-## Jetson Notes
-
-- This branch prioritizes control-loop timing precision and thread safety for high-frequency loops.
-- Keep CPU governor/performance mode configured for deterministic control timing.
-- Verify DDS split config in dual-node mode (`CycloneDDS` for bridge, `FastDDS` for go2 node) before field runs.
-
-## Tests
-
-Standalone tests (CMake mode):
-
-```bash
-cd /home/lemon/Issac/rl_ras_n
-cmake -S src/rl_sar -B cmake_build -DUSE_CMAKE=ON -DBUILD_TESTING=ON
-cmake --build cmake_build -j$(nproc)
-ctest --test-dir cmake_build --output-on-failure
-```
-
-Current tests:
-
-- `test_loop_timing_precision`
-- `test_joint_mapping_validation`
-- `test_go2_x5_control_logic`
-- `test_go2_x5_arm_bridge_defaults`
-
-## Repository Layout
-
-- `src/rl_sar/`: core runtime and FSM
-- `src/robot_msgs/`: ROS message definitions
-- `src/robot_joint_controller/`: robot joint controller
-- `policy/go2/`: Go2 policies/config
-- `policy/go2_x5/`: Go2-X5 policies/config
-- `scripts/`: dependency/install helper scripts
-- `rl_sar.md`: engineering change log
+- [AGENT.md](/home/lemon/Issac/rl_ras_n/AGENT.md)
+- [README.md](/home/lemon/Issac/rl_ras_n/README.md)
+- [Instruction.md](/home/lemon/Issac/rl_ras_n/Instruction.md)

@@ -1,5 +1,7 @@
 
 #include "rl_real_go2_x5.hpp"
+#include "rl_sar/adapters/arx_adapter.hpp"
+#include "rl_sar/go2x5/config/go2_x5_config.hpp"
 #include "rl_sar/go2x5/ipc.hpp"
 #include <mutex>
 #include <chrono>
@@ -16,6 +18,10 @@
 void RL_Real_Go2X5::ReadArmStateFromExternal(RobotState<float> *state)
 {
     if (!this->arm_split_control_enabled || this->arm_joint_count <= 0)
+    {
+        return;
+    }
+    if (this->SyncArmStateFromAdapter(state))
     {
         return;
     }
@@ -199,41 +205,139 @@ void RL_Real_Go2X5::WriteArmCommandToExternal(const RobotCommand<float> *command
         this->ApplyArmBridgeRuntimeStateLocked(bridge_state);
     }
 
+    rl_sar::protocol::ArmCommandFrame frame;
+    frame.header.msg_type = rl_sar::protocol::FrameType::ArmCommand;
+    frame.header.validity_flags = rl_sar::protocol::kValidityPayloadValid;
+    frame.joint_count = static_cast<uint16_t>(this->arm_joint_count);
+    const uint64_t now_ns = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    frame.header.source_monotonic_ns = now_ns;
+    frame.header.publish_monotonic_ns = now_ns;
+    frame.command_expire_ns = now_ns + 15'000'000ULL;
+    for (int i = 0; i < this->arm_joint_count && i < static_cast<int>(rl_sar::protocol::kArmJointCount); ++i)
+    {
+        const size_t idx = static_cast<size_t>(i);
+        frame.q[idx] = arm_q[idx];
+        frame.dq[idx] = arm_dq[idx];
+        frame.kp[idx] = arm_kp[idx];
+        frame.kd[idx] = arm_kd[idx];
+        frame.tau[idx] = arm_tau[idx];
+    }
+
+    if (this->arx_adapter_active_ && this->arx_adapter_)
+    {
+        this->arx_adapter_->SetCommand(frame);
+        return;
+    }
+
+    this->WriteArmCommandFrameToExternal(frame);
+}
+
+void RL_Real_Go2X5::WriteArmCommandFrameToExternal(const rl_sar::protocol::ArmCommandFrame& input_frame)
+{
+    if (!this->arm_split_control_enabled || this->arm_joint_count <= 0)
+    {
+        return;
+    }
+
+    std::vector<float> arm_q(static_cast<size_t>(this->arm_joint_count), 0.0f);
+    std::vector<float> arm_dq(static_cast<size_t>(this->arm_joint_count), 0.0f);
+    std::vector<float> arm_kp(static_cast<size_t>(this->arm_joint_count), 0.0f);
+    std::vector<float> arm_kd(static_cast<size_t>(this->arm_joint_count), 0.0f);
+    std::vector<float> arm_tau(static_cast<size_t>(this->arm_joint_count), 0.0f);
+    std::vector<float> arm_hold_local;
+    {
+        std::lock_guard<std::mutex> lock(this->arm_command_mutex);
+        arm_hold_local = this->arm_hold_position;
+    }
+
+    for (int i = 0; i < this->arm_joint_count && i < static_cast<int>(rl_sar::protocol::kArmJointCount); ++i)
+    {
+        const size_t idx = static_cast<size_t>(i);
+        arm_q[idx] = input_frame.q[idx];
+        arm_dq[idx] = input_frame.dq[idx];
+        arm_kp[idx] = input_frame.kp[idx];
+        arm_kd[idx] = input_frame.kd[idx];
+        arm_tau[idx] = input_frame.tau[idx];
+    }
+
+    if (!this->ClipArmBridgeCommandInPlace(
+            arm_q, arm_dq, arm_kp, arm_kd, arm_tau, arm_hold_local, "Arm bridge command frame"))
+    {
+        if (arm_hold_local.size() == static_cast<size_t>(this->arm_joint_count))
+        {
+            const auto fixed_kp = GetFixedKp();
+            const auto fixed_kd = GetFixedKd();
+            for (int i = 0; i < this->arm_joint_count; ++i)
+            {
+                const size_t idx = static_cast<size_t>(i);
+                const int joint_idx = this->arm_joint_start_index + i;
+                arm_q[idx] = arm_hold_local[idx];
+                arm_dq[idx] = 0.0f;
+                arm_tau[idx] = 0.0f;
+                arm_kp[idx] =
+                    (joint_idx >= 0 && joint_idx < static_cast<int>(fixed_kp.size()))
+                        ? fixed_kp[static_cast<size_t>(joint_idx)]
+                        : 0.0f;
+                arm_kd[idx] =
+                    (joint_idx >= 0 && joint_idx < static_cast<int>(fixed_kd.size()))
+                        ? fixed_kd[static_cast<size_t>(joint_idx)]
+                        : 0.0f;
+            }
+            this->ClipArmBridgeCommandInPlace(
+                arm_q, arm_dq, arm_kp, arm_kd, arm_tau, arm_hold_local, "Arm bridge hold fallback");
+        }
+        else
+        {
+            std::cout << LOGGER::WARNING
+                      << "Arm command frame rejected and no valid hold fallback is available."
+                      << std::endl;
+            return;
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(this->arm_external_state_mutex);
+        auto bridge_state = this->CaptureArmBridgeRuntimeStateLocked();
+        Go2X5ArmBridgeRuntime::UpdateShadowState(&bridge_state, arm_q, arm_dq);
+        this->ApplyArmBridgeRuntimeStateLocked(bridge_state);
+    }
+
+    rl_sar::protocol::ArmCommandFrame frame = input_frame;
+    const uint64_t now_ns = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    frame.header.seq = ++this->arm_bridge_command_seq_;
+    frame.header.source_monotonic_ns = now_ns;
+    frame.header.publish_monotonic_ns = now_ns;
+    frame.header.validity_flags |= rl_sar::protocol::kValidityPayloadValid;
+    frame.joint_count = static_cast<uint16_t>(this->arm_joint_count);
+    if (frame.command_expire_ns == 0 || frame.command_expire_ns <= now_ns)
+    {
+        frame.command_expire_ns = now_ns + 15'000'000ULL;
+    }
+    for (int i = 0; i < this->arm_joint_count && i < static_cast<int>(rl_sar::protocol::kArmJointCount); ++i)
+    {
+        const size_t idx = static_cast<size_t>(i);
+        frame.q[idx] = arm_q[idx];
+        frame.dq[idx] = arm_dq[idx];
+        frame.kp[idx] = arm_kp[idx];
+        frame.kd[idx] = arm_kd[idx];
+        frame.tau[idx] = arm_tau[idx];
+    }
+
+    if (this->arx_adapter_active_ && this->arx_adapter_)
+    {
+        this->arx_adapter_->SetCommand(frame);
+        return;
+    }
+
     if (this->UseArmBridgeIpc())
     {
 #if defined(__linux__)
         if (this->arm_bridge_cmd_socket_fd >= 0)
         {
-            rl_sar::protocol::ArmCommandFrame frame;
-            const uint64_t now_ns = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::steady_clock::now().time_since_epoch()).count());
-            uint64_t expire_ns = now_ns + 15'000'000ULL;
-            if (this->deploy_manifest_runtime_ && this->deploy_manifest_runtime_->HasManifest())
-            {
-                const auto snapshot = this->deploy_manifest_runtime_->Snapshot();
-                if (snapshot.arm_command_expire_ms > 0)
-                {
-                    expire_ns = now_ns + static_cast<uint64_t>(snapshot.arm_command_expire_ms) * 1'000'000ULL;
-                }
-            }
-
-            frame.header.seq = ++this->arm_bridge_command_seq_;
-            frame.header.source_monotonic_ns = now_ns;
-            frame.header.publish_monotonic_ns = now_ns;
-            frame.header.validity_flags = rl_sar::protocol::kValidityPayloadValid;
-            frame.joint_count = static_cast<uint16_t>(this->arm_joint_count);
-            frame.command_expire_ns = expire_ns;
-            for (int i = 0; i < this->arm_joint_count && i < static_cast<int>(rl_sar::protocol::kArmJointCount); ++i)
-            {
-                const size_t idx = static_cast<size_t>(i);
-                frame.q[idx] = arm_q[idx];
-                frame.dq[idx] = arm_dq[idx];
-                frame.kp[idx] = arm_kp[idx];
-                frame.kd[idx] = arm_kd[idx];
-                frame.tau[idx] = arm_tau[idx];
-            }
-
             const auto bytes = rl_sar::protocol::SerializeArmCommandFrame(frame);
             const ssize_t sent = send(
                 this->arm_bridge_cmd_socket_fd,

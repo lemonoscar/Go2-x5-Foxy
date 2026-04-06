@@ -298,6 +298,7 @@ private:
     void WriteToLog(const EventLogEntry& event);
     void WriteToJson(const EventLogEntry& event);
     void WriteToConsole(const EventLogEntry& event);
+    void FlushUnlocked();
     void AddToBuffer(const EventLogEntry& event);
     std::string FormatEvent(const EventLogEntry& event) const;
     std::string FormatJson(const EventLogEntry& event) const;

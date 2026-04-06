@@ -1,5 +1,6 @@
 
 #include "rl_real_go2_x5.hpp"
+#include "rl_sar/go2x5/config/go2_x5_config.hpp"
 #include <limits>
 
 // ============================================================================

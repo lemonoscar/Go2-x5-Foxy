@@ -13,6 +13,31 @@
 #include <unistd.h>
 #endif
 
+#if defined(__linux__)
+namespace
+{
+
+bool MakeIpv4Endpoint(const std::string& host, const int port, sockaddr_in& addr)
+{
+    if (port <= 0 || port > 65535)
+    {
+        return false;
+    }
+
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(static_cast<uint16_t>(port));
+    if (host.empty())
+    {
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        return true;
+    }
+    return inet_pton(AF_INET, host.c_str(), &addr.sin_addr) == 1;
+}
+
+} // namespace
+#endif
+
 // ============================================================================
 // IPC Communication Functions
 // ============================================================================
@@ -279,51 +304,12 @@ void RL_Real_Go2X5::SetupArmBridgeInterface()
     {
         return;
     }
-    if (this->UseArmBridgeIpc())
-    {
-        this->SetupArmBridgeIpc();
-        return;
-    }
-
-#if !defined(USE_CMAKE) && defined(USE_ROS)
-    if (this->arm_bridge_cmd_topic.empty() || this->arm_bridge_state_topic.empty())
-    {
-        std::cout << LOGGER::WARNING << "Arm split control enabled but bridge topics are empty." << std::endl;
-        return;
-    }
-#if defined(USE_ROS1) && defined(USE_ROS)
-    if (!this->ros1_nh)
-    {
-        return;
-    }
-    this->arm_bridge_cmd_publisher =
-        this->ros1_nh->advertise<std_msgs::Float32MultiArray>(this->arm_bridge_cmd_topic, 1);
-    this->arm_bridge_state_subscriber =
-        this->ros1_nh->subscribe<std_msgs::Float32MultiArray>(
-            this->arm_bridge_state_topic, 10, &RL_Real_Go2X5::ArmBridgeStateCallback, this);
-#elif defined(USE_ROS2) && defined(USE_ROS)
-    if (!this->enable_ros2_runtime || !this->ros2_node)
+    if (!this->UseArmBridgeIpc())
     {
         std::cout << LOGGER::WARNING
-                  << "Arm bridge transport is ROS, but ROS2 runtime is unavailable in rl_real_go2_x5."
+                  << "ROS Float32 arm bridge fallback disabled. Forcing typed IPC transport."
                   << std::endl;
-        return;
+        this->arm_bridge_transport = "ipc";
     }
-    this->arm_bridge_cmd_publisher =
-        this->ros2_node->create_publisher<std_msgs::msg::Float32MultiArray>(
-            this->arm_bridge_cmd_topic, rclcpp::SystemDefaultsQoS());
-    this->arm_bridge_state_subscriber =
-        this->ros2_node->create_subscription<std_msgs::msg::Float32MultiArray>(
-            this->arm_bridge_state_topic, rclcpp::SystemDefaultsQoS(),
-            [this] (const std_msgs::msg::Float32MultiArray::SharedPtr msg) { this->ArmBridgeStateCallback(msg); });
-#endif
-    std::cout << LOGGER::INFO << "Arm bridge ready. cmd_topic=" << this->arm_bridge_cmd_topic
-              << ", state_topic=" << this->arm_bridge_state_topic << std::endl;
-#else
-    if (this->arm_split_control_enabled)
-    {
-        std::cout << LOGGER::WARNING
-                  << "Arm split control enabled in non-ROS build. External arm bridge is unavailable." << std::endl;
-    }
-#endif
+    this->SetupArmBridgeIpc();
 }

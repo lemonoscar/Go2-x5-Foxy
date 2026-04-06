@@ -86,6 +86,12 @@ struct BodyStateFrame
     uint32_t lowstate_age_us = 0;
     uint8_t dds_ok = 0;
     std::array<uint8_t, 3> reserved{};
+
+    BodyStateFrame()
+    {
+        header.msg_type = FrameType::BodyState;
+        header.payload_bytes = static_cast<uint32_t>(kBodyStatePayloadSize);
+    }
 };
 
 struct ArmStateFrame
@@ -101,6 +107,12 @@ struct ArmStateFrame
     uint32_t backend_age_us = 0;
     uint32_t transport_age_us = 0;
     uint64_t target_seq_applied = 0;
+
+    ArmStateFrame()
+    {
+        header.msg_type = FrameType::ArmState;
+        header.payload_bytes = static_cast<uint32_t>(kArmStatePayloadSize);
+    }
 };
 
 struct OperatorCommandFrame
@@ -117,6 +129,12 @@ struct OperatorCommandFrame
     float cmd_vel_yaw = 0.0f;
     std::array<float, 6> arm_target_q{};
     float gripper_target = 0.0f;
+
+    OperatorCommandFrame()
+    {
+        header.msg_type = FrameType::OperatorCommand;
+        header.payload_bytes = static_cast<uint32_t>(kOperatorCommandPayloadSize);
+    }
 };
 
 struct DogPolicyObservationFrame
@@ -132,6 +150,12 @@ struct DogPolicyObservationFrame
     std::array<float, 187> height_scan{};
     std::array<float, 6> arm_joint_command{};
     std::array<float, 1> gripper_command{};
+
+    DogPolicyObservationFrame()
+    {
+        header.msg_type = FrameType::DogPolicyObservation;
+        header.payload_bytes = static_cast<uint32_t>(kDogPolicyObservationPayloadSize);
+    }
 };
 
 struct DogPolicyCommandFrame
@@ -142,6 +166,12 @@ struct DogPolicyCommandFrame
     uint16_t reserved0 = 0;
     uint32_t inference_latency_us = 0;
     std::array<float, 12> leg_action{};
+
+    DogPolicyCommandFrame()
+    {
+        header.msg_type = FrameType::DogPolicyCommand;
+        header.payload_bytes = static_cast<uint32_t>(kDogPolicyCommandPayloadSize);
+    }
 };
 
 struct ArmCommandFrame
@@ -156,6 +186,12 @@ struct ArmCommandFrame
     std::array<float, 6> kd{};
     std::array<float, 6> tau{};
     float gripper_target = 0.0f;
+
+    ArmCommandFrame()
+    {
+        header.msg_type = FrameType::ArmCommand;
+        header.payload_bytes = static_cast<uint32_t>(kArmCommandPayloadSize);
+    }
 };
 
 struct BodyCommandFrame
@@ -169,6 +205,12 @@ struct BodyCommandFrame
     std::array<float, 12> kp{};
     std::array<float, 12> kd{};
     std::array<float, 12> tau{};
+
+    BodyCommandFrame()
+    {
+        header.msg_type = FrameType::BodyCommand;
+        header.payload_bytes = static_cast<uint32_t>(kBodyCommandPayloadSize);
+    }
 };
 
 struct HybridDiagnosticFrame
@@ -185,6 +227,12 @@ struct HybridDiagnosticFrame
     uint32_t dds_write_fail_count = 0;
     uint32_t arm_backend_fail_count = 0;
     uint32_t seq_gap_count = 0;
+
+    HybridDiagnosticFrame()
+    {
+        header.msg_type = FrameType::HybridDiagnostic;
+        header.payload_bytes = static_cast<uint32_t>(kHybridDiagnosticPayloadSize);
+    }
 };
 
 struct ModeEventFrame
@@ -195,6 +243,12 @@ struct ModeEventFrame
     uint32_t reason_code = 0;
     uint64_t trigger_seq = 0;
     uint64_t detail_value = 0;
+
+    ModeEventFrame()
+    {
+        header.msg_type = FrameType::ModeEvent;
+        header.payload_bytes = static_cast<uint32_t>(kModeEventPayloadSize);
+    }
 };
 
 }  // namespace rl_sar::protocol

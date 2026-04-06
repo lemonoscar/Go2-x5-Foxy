@@ -6,22 +6,13 @@
 // #define USE_ROS
 
 #include "rl_sdk.hpp"
-#include "observation_buffer.hpp"
-#include "inference_runtime.hpp"
-#include "loop.hpp"
 #include "rl_sar/go2x5/control/go2_x5_control_logic.hpp"
-#include "rl_sar/go2x5/state/go2_x5_state_manager.hpp"
-#include "rl_sar/go2x5/arm/go2_x5_arm_transport.hpp"
-#include "rl_sar/go2x5/arm/go2_x5_arm_controller.hpp"
 #include "rl_sar/go2x5/arm/go2_x5_arm_runtime.hpp"
 #include "rl_sar/go2x5/arm/go2_x5_arm_bridge_runtime.hpp"
-#include "rl_sar/go2x5/config/go2_x5_config.hpp"
 #include "rl_sar/go2x5/comm/go2_x5_ipc_protocol.hpp"
 #include "rl_sar/protocol/go2_x5_protocol.hpp"
+#include "rl_sar/runtime/coordinator/go2_x5_coordinator.hpp"
 #include "rl_sar/runtime/supervisor/go2_x5_supervisor.hpp"
-#include "library/core/config/deploy_manifest_runtime.hpp"
-#include "fsm_go2_x5.hpp"
-#include "library/core/config/config_loader.hpp"
 
 #include <unitree/robot/channel/channel_publisher.hpp>
 #include <unitree/robot/channel/channel_subscriber.hpp>
@@ -43,19 +34,50 @@
 #if defined(USE_ROS1) && defined(USE_ROS)
 #include <ros/ros.h>
 #include <geometry_msgs/Twist.h>
-#include <std_msgs/Float32MultiArray.h>
 #elif defined(USE_ROS2) && defined(USE_ROS)
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/twist.hpp>
-#include <std_msgs/msg/float32_multi_array.hpp>
 #endif
 
-#include "matplotlibcpp.h"
-namespace plt = matplotlibcpp;
+class LoopFunc;
 
-using namespace unitree::common;
-using namespace unitree::robot;
-using namespace unitree::robot::b2;
+namespace RLConfig
+{
+class ConfigLoader;
+class DeployManifestRuntime;
+}
+
+namespace Go2X5State
+{
+class StateManager;
+}
+
+namespace Go2X5ArmController
+{
+class ArmController;
+}
+
+namespace Go2X5Config
+{
+class Go2X5Config;
+}
+
+namespace rl_sar::adapters
+{
+class UnitreeAdapter;
+class ArxAdapter;
+}
+
+namespace rl_sar::diagnostics
+{
+class DiagnosticsPublisher;
+class DriftMetricsRecorder;
+}
+
+namespace rl_sar::logger
+{
+class EventLogger;
+}
 
 #define TOPIC_LOWCMD "rt/lowcmd"
 #define TOPIC_LOWSTATE "rt/lowstate"
@@ -123,7 +145,7 @@ private:
     uint32_t Crc32Core(uint32_t *ptr, uint32_t len);
     void LowStateMessageHandler(const void *messages);
     void JoystickHandler(const void *message);
-    MotionSwitcherClient msc;
+    unitree::robot::b2::MotionSwitcherClient msc;
     unitree_go::msg::dds_::LowCmd_ unitree_low_command{};
     std::array<float, 4> unitree_imu_quaternion{{1.0f, 0.0f, 0.0f, 0.0f}};
     std::array<float, 3> unitree_imu_gyroscope{{0.0f, 0.0f, 0.0f}};
@@ -133,9 +155,9 @@ private:
     float unitree_joy_lx = 0.0f;
     float unitree_joy_ly = 0.0f;
     float unitree_joy_rx = 0.0f;
-    ChannelPublisherPtr<unitree_go::msg::dds_::LowCmd_> lowcmd_publisher;
-    ChannelSubscriberPtr<unitree_go::msg::dds_::LowState_> lowstate_subscriber;
-    ChannelSubscriberPtr<unitree_go::msg::dds_::WirelessController_> joystick_subscriber;
+    unitree::robot::ChannelPublisherPtr<unitree_go::msg::dds_::LowCmd_> lowcmd_publisher;
+    unitree::robot::ChannelSubscriberPtr<unitree_go::msg::dds_::LowState_> lowstate_subscriber;
+    unitree::robot::ChannelSubscriberPtr<unitree_go::msg::dds_::WirelessController_> joystick_subscriber;
     xKeySwitchUnion unitree_joy;
 
     std::unique_ptr<RLConfig::ConfigLoader> config_loader_;
@@ -144,8 +166,14 @@ private:
     std::unique_ptr<Go2X5State::StateManager> state_manager_;
     std::unique_ptr<Go2X5ArmController::ArmController> arm_controller_;
     std::unique_ptr<Go2X5Supervisor::Supervisor> supervisor_;
+    std::unique_ptr<rl_sar::runtime::coordinator::HybridMotionCoordinator> coordinator_;
+    std::unique_ptr<rl_sar::adapters::UnitreeAdapter> unitree_adapter_;
+    std::unique_ptr<rl_sar::adapters::ArxAdapter> arx_adapter_;
+    std::unique_ptr<rl_sar::diagnostics::DiagnosticsPublisher> diagnostics_publisher_;
+    std::unique_ptr<rl_sar::diagnostics::DriftMetricsRecorder> drift_recorder_;
+    std::unique_ptr<rl_sar::logger::EventLogger> event_logger_;
 
-    std::string deploy_manifest_path_ = RLConfig::DeployManifestRuntime::kDefaultManifestPath;
+    std::string deploy_manifest_path_;
     bool manifest_valid_ = false;
     bool runtime_config_valid_ = false;
     bool runtime_ros2_enabled_explicit_ = false;
@@ -160,6 +188,14 @@ private:
     bool body_state_seq_pending_ = false;
     bool arm_state_seq_pending_ = false;
     bool policy_seen_ = false;
+    bool latest_policy_command_valid_ = false;
+    rl_sar::protocol::DogPolicyCommandFrame latest_policy_command_frame_{};
+    bool unitree_adapter_active_ = false;
+    bool arx_adapter_active_ = false;
+    uint32_t mode_transition_count_ = 0;
+    uint64_t last_coordinator_jitter_us_ = 0;
+    double last_coordinator_frequency_hz_ = 0.0;
+    std::chrono::steady_clock::time_point last_coordinator_tick_{};
 
     void InitializeConfigLoader();
     void InitializeRuntimeOptions(int argc, char **argv);
@@ -168,8 +204,26 @@ private:
     void InitializeArmChannelConfig();
     void InitializeRealDeploySafetyConfig();
     void InitializeSupervisor();
+    void InitializeCoordinator();
+    void InitializeRuntimeIntegrations();
+    void InitializeAdapters();
+    void InitializeDiagnostics();
     void ValidateJointMappingOrThrow(const char* stage) const;
     Go2X5Supervisor::WatchdogInput BuildSupervisorInput() const;
+    rl_sar::runtime::coordinator::Input BuildCoordinatorInput(uint64_t now_monotonic_ns) const;
+    bool SyncBodyStateFromAdapter(RobotState<float>* state);
+    bool SyncArmStateFromAdapter(RobotState<float>* state);
+    void UpdateRuntimeDiagnostics(const Go2X5Supervisor::TransitionResult* transition_result);
+    void LogSupervisorEvent(const Go2X5Supervisor::TransitionResult& result);
+    bool ApplyCoordinatorBodyCommand(const rl_sar::protocol::BodyCommandFrame& frame,
+                                     RobotCommand<float>* command) const;
+    rl_sar::protocol::BodyCommandFrame BuildHoldBodyCommandFrame(
+        uint64_t now_monotonic_ns,
+        Go2X5Supervisor::Mode mode) const;
+    rl_sar::protocol::ArmCommandFrame BuildHoldArmCommandFrame(
+        uint64_t now_monotonic_ns,
+        Go2X5Supervisor::Mode mode) const;
+    void WriteArmCommandFrameToExternal(const rl_sar::protocol::ArmCommandFrame& frame);
     void RefreshSupervisorState(const char* source);
 
     int GetNumDofs() const;
@@ -334,11 +388,13 @@ private:
     std::vector<float> arm_joint_lower_limits;
     std::vector<float> arm_joint_upper_limits;
 
-    std::mutex cmd_vel_mutex;
-    std::mutex arm_command_mutex;
-    std::mutex arm_external_state_mutex;
-    std::mutex unitree_state_mutex;
+    mutable std::mutex cmd_vel_mutex;
+    mutable std::mutex arm_command_mutex;
+    mutable std::mutex arm_external_state_mutex;
+    mutable std::mutex unitree_state_mutex;
     mutable std::mutex supervisor_mutex;
+    mutable std::mutex policy_frame_mutex;
+    mutable std::mutex runtime_metrics_mutex;
 
 #if defined(USE_ROS1) && defined(USE_ROS)
     std::shared_ptr<ros::NodeHandle> ros1_nh;
@@ -346,23 +402,13 @@ private:
     geometry_msgs::Twist cmd_vel_filtered;
     ros::Publisher cmd_vel_publisher;
     ros::Subscriber cmd_vel_subscriber;
-    ros::Subscriber arm_joint_command_subscriber;
-    ros::Publisher arm_bridge_cmd_publisher;
-    ros::Subscriber arm_bridge_state_subscriber;
     void CmdvelCallback(const geometry_msgs::Twist::ConstPtr &msg);
-    void ArmJointCommandCallback(const std_msgs::Float32MultiArray::ConstPtr &msg);
-    void ArmBridgeStateCallback(const std_msgs::Float32MultiArray::ConstPtr &msg);
 #elif defined(USE_ROS2) && defined(USE_ROS)
     geometry_msgs::msg::Twist cmd_vel;
     geometry_msgs::msg::Twist cmd_vel_filtered;
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_publisher;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_subscriber;
-    rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr arm_joint_command_subscriber;
-    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr arm_bridge_cmd_publisher;
-    rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr arm_bridge_state_subscriber;
     void CmdvelCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
-    void ArmJointCommandCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg);
-    void ArmBridgeStateCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg);
 #endif
 };
 

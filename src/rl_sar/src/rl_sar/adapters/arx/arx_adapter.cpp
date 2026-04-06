@@ -5,8 +5,10 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <errno.h>
+#include <filesystem>
 #include <ifaddrs.h>
 #include <linux/if.h>
+#include <limits>
 #include <stdexcept>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -19,8 +21,8 @@ namespace
 {
 
 constexpr uint16_t kArxJointCount = 6;
-constexpr char kArxSdkLibName[] = "libarx5_sdk.so";
-constexpr char kArxSdkLibNameAlt[] = "libarx5_interface.so";
+constexpr char kArxSdkHardwareLibName[] = "libhardware.so";
+constexpr char kArxSdkSolverLibName[] = "libsolver.so";
 
 // Logging utility - in production this would use the project's logger
 void LogInfo(const std::string& msg)
@@ -55,6 +57,33 @@ float L2Norm(const std::array<float, 6>& values)
     return std::sqrt(sum);
 }
 
+std::string DetectArxLibDirFromRoot(const std::string& root)
+{
+    if (root.empty())
+    {
+        return {};
+    }
+    namespace fs = std::filesystem;
+    const fs::path base(root);
+    const std::string arch =
+#if defined(__aarch64__)
+        "aarch64";
+#else
+        "x86_64";
+#endif
+    const fs::path arch_dir = base / "lib" / arch;
+    if (fs::exists(arch_dir / kArxSdkHardwareLibName))
+    {
+        return arch_dir.string();
+    }
+    const fs::path flat_dir = base / "lib";
+    if (fs::exists(flat_dir / kArxSdkHardwareLibName))
+    {
+        return flat_dir.string();
+    }
+    return {};
+}
+
 }  // namespace
 
 // ============================================================================
@@ -80,8 +109,8 @@ bool ArxAdapter::Initialize(const Config& config)
     config_ = config;
     std::string error;
 
-    // Load ARX SDK
-    if (!LoadArxSdk(&error))
+    const bool sdk_loaded = LoadArxSdk(&error);
+    if (!sdk_loaded)
     {
         LogError("Failed to load ARX SDK: " + error);
         if (config_.require_live_state)
@@ -95,11 +124,15 @@ bool ArxAdapter::Initialize(const Config& config)
     if (!InitializeCanInterface(&error))
     {
         LogError("Failed to initialize CAN interface: " + error);
-        return false;
+        if (config_.require_live_state)
+        {
+            return false;
+        }
+        LogWarning("Continuing without CAN interface (shadow mode)");
     }
 
     // Initialize backend
-    if (!InitializeBackend(&error))
+    if (sdk_loaded && can_initialized_ && !InitializeBackend(&error))
     {
         LogError("Failed to initialize backend: " + error);
         if (config_.require_live_state)
@@ -108,7 +141,7 @@ bool ArxAdapter::Initialize(const Config& config)
         }
         LogWarning("Continuing without backend (shadow mode)");
     }
-    else if (config_.require_live_state)
+    else if (sdk_loaded && can_initialized_ && config_.require_live_state)
     {
         // Verify we have live state
         if (!VerifyInitialState(&error))
@@ -189,7 +222,7 @@ void ArxAdapter::SetCommand(const protocol::ArmCommandFrame& cmd)
 
     InternalCommand internal;
     internal.seq = cmd.header.seq;
-    internal.expire_ns = cmd.header.publish_monotonic_ns + cmd.command_expire_ns;
+    internal.expire_ns = cmd.command_expire_ns;
     internal.valid = true;
 
     // Copy joint data (ensure we only copy up to 6 joints)
@@ -237,9 +270,8 @@ bool ArxAdapter::GetState(protocol::ArmStateFrame& state)
     }
 
     // Fill state frame
-    state.header = internal.from_backend ?
-        protocol::FrameHeader{} : protocol::FrameHeader{};
-
+    state.header = protocol::FrameHeader{};
+    state.header.msg_type = protocol::FrameType::ArmState;
     state.header.source_monotonic_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
         internal.stamp.time_since_epoch()).count();
     state.header.publish_monotonic_ns = GetMonotonicNs();
@@ -300,6 +332,10 @@ bool ArxAdapter::IsTrackingHealthy() const
 uint64_t ArxAdapter::GetStateAgeUs() const
 {
     std::lock_guard<std::mutex> lock(state_mutex_);
+    if (current_state_.stamp.time_since_epoch().count() == 0)
+    {
+        return std::numeric_limits<uint64_t>::max();
+    }
     auto now = std::chrono::steady_clock::now();
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
         now - current_state_.stamp).count());
@@ -325,81 +361,73 @@ ArxAdapter::Stats ArxAdapter::GetStats() const
 
 bool ArxAdapter::LoadArxSdk(std::string* error)
 {
-    // Determine SDK library path
-    std::string lib_path = config_.sdk_lib_path;
-
-    if (lib_path.empty())
+    namespace fs = std::filesystem;
+    std::string lib_dir = config_.sdk_lib_path;
+    if (!lib_dir.empty() && fs::is_regular_file(fs::path(lib_dir)))
     {
-        const char* env_root = std::getenv("ARX5_SDK_ROOT");
-        if (env_root)
-        {
-            lib_path = std::string(env_root) + "/lib/libarx5_sdk.so";
-        }
+        lib_dir = fs::path(lib_dir).parent_path().string();
     }
-
-    // Try to load the library
-    arx_sdk_handle_ = dlopen(lib_path.c_str(), RTLD_LAZY);
-    if (!arx_sdk_handle_ && !lib_path.empty())
+    if (lib_dir.empty())
     {
-        *error = "dlopen failed: " + std::string(dlerror());
+        std::string root = config_.sdk_root;
+        if (root.empty())
+        {
+            if (const char* env_root = std::getenv("ARX5_SDK_ROOT"))
+            {
+                root = env_root;
+            }
+        }
+        lib_dir = DetectArxLibDirFromRoot(root);
+    }
+    if (lib_dir.empty())
+    {
+        *error = "ARX SDK root/lib path not configured";
         return false;
     }
 
-    // If no path specified, try common names
-    if (!arx_sdk_handle_)
+    const fs::path solver_path = fs::path(lib_dir) / kArxSdkSolverLibName;
+    const fs::path hardware_path = fs::path(lib_dir) / kArxSdkHardwareLibName;
+    if (!fs::exists(solver_path))
     {
-        arx_sdk_handle_ = dlopen(kArxSdkLibName, RTLD_LAZY);
+        *error = "Missing solver library: " + solver_path.string();
+        return false;
     }
-    if (!arx_sdk_handle_)
+    if (!fs::exists(hardware_path))
     {
-        arx_sdk_handle_ = dlopen(kArxSdkLibNameAlt, RTLD_LAZY);
-    }
-    if (!arx_sdk_handle_)
-    {
-        *error = "Could not find ARX SDK library (tried: " +
-                 std::string(kArxSdkLibName) + ", " +
-                 std::string(kArxSdkLibNameAlt) + ")";
+        *error = "Missing hardware library: " + hardware_path.string();
         return false;
     }
 
-    // Load function pointers
-    auto load_sym = [this, error](const char* name, auto*& ptr) -> bool {
-        ptr = reinterpret_cast<decltype(ptr)>(dlsym(arx_sdk_handle_, name));
-        if (!ptr)
-        {
-            *error = "Missing symbol: " + std::string(name);
-            return false;
-        }
-        return true;
-    };
+    arx_solver_handle_ = dlopen(solver_path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!arx_solver_handle_)
+    {
+        *error = "dlopen failed for " + solver_path.string() + ": " + std::string(dlerror());
+        return false;
+    }
+    arx_sdk_handle_ = dlopen(hardware_path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!arx_sdk_handle_)
+    {
+        *error = "dlopen failed for " + hardware_path.string() + ": " + std::string(dlerror());
+        dlclose(arx_solver_handle_);
+        arx_solver_handle_ = nullptr;
+        return false;
+    }
 
-    // Note: These are example function names - actual ARX SDK may differ
-    // In production, these would match the actual SDK interface
-    // For now, we set dummy pointers to allow compilation
-    arx_vtable_.create = nullptr;
-    arx_vtable_.destroy = nullptr;
-    arx_vtable_.send_command = nullptr;
-    arx_vtable_.recv_state = nullptr;
-    arx_vtable_.set_gain = nullptr;
-    arx_vtable_.reset_to_home = nullptr;
-    arx_vtable_.is_healthy = nullptr;
-    arx_vtable_.stop = nullptr;
-
-    LogInfo("ARX SDK loaded from: " + lib_path);
+    LogInfo("ARX SDK dependencies probed from: " + lib_dir);
     return true;
 }
 
 void ArxAdapter::UnloadArxSdk()
 {
-    if (arx_vtable_.destroy)
-    {
-        arx_vtable_.destroy();
-    }
-
     if (arx_sdk_handle_)
     {
         dlclose(arx_sdk_handle_);
         arx_sdk_handle_ = nullptr;
+    }
+    if (arx_solver_handle_)
+    {
+        dlclose(arx_solver_handle_);
+        arx_solver_handle_ = nullptr;
     }
 
     backend_initialized_ = false;
@@ -439,32 +467,8 @@ bool ArxAdapter::InitializeBackend(std::string* error)
         *error = "ARX SDK not loaded";
         return false;
     }
-
-    if (!arx_vtable_.create)
-    {
-        *error = "ARX SDK vtable not initialized (SDK may not support direct C++ interface)";
-        return false;
-    }
-
-    int background_mode = config_.background_send_recv ? 1 : 0;
-    if (!arx_vtable_.create(config_.model.c_str(), config_.can_interface.c_str(),
-                            background_mode, config_.controller_dt))
-    {
-        *error = "Backend creation failed";
-        return false;
-    }
-
-    backend_initialized_ = true;
-
-    // Reset to home if requested
-    if (config_.init_to_home && arx_vtable_.reset_to_home)
-    {
-        arx_vtable_.reset_to_home();
-        LogInfo("Reset arm to home position");
-    }
-
-    LogInfo("ARX backend initialized");
-    return true;
+    *error = "Direct ARX in-process backend is unavailable in this build; use the external arm bridge pipeline";
+    return false;
 }
 
 bool ArxAdapter::VerifyInitialState(std::string* error)
@@ -591,10 +595,7 @@ void ArxAdapter::ServoLoop()
         }
 
         // Update health status
-        if (arx_vtable_.is_healthy)
-        {
-            stats_.backend_healthy = arx_vtable_.is_healthy();
-        }
+        stats_.backend_healthy = backend_initialized_;
 
         ++stats_.servo_loops;
 
@@ -614,43 +615,20 @@ void ArxAdapter::ServoLoop()
 
 void ArxAdapter::SendCommand(const InternalCommand& cmd)
 {
-    if (!backend_initialized_ || !arx_vtable_.send_command)
+    if (!backend_initialized_)
     {
-        ++stats_.send_failures;
         return;
     }
-
-    bool success = arx_vtable_.send_command(
-        cmd.q.data(), cmd.dq.data(), cmd.kp.data(),
-        cmd.kd.data(), cmd.tau.data(), kArxJointCount);
-
-    if (success)
-    {
-        ++stats_.commands_sent;
-    }
-    else
-    {
-        ++stats_.send_failures;
-    }
+    ++stats_.send_failures;
 }
 
 bool ArxAdapter::ReceiveState(InternalState& state)
 {
-    if (!backend_initialized_ || !arx_vtable_.recv_state)
+    if (!backend_initialized_)
     {
         return false;
     }
-
-    bool success = arx_vtable_.recv_state(
-        state.q.data(), state.dq.data(), state.tau.data(), kArxJointCount);
-
-    if (success)
-    {
-        state.from_backend = true;
-        state.stamp = std::chrono::steady_clock::now();
-    }
-
-    return success;
+    return false;
 }
 
 void ArxAdapter::UpdateTrackingError()

@@ -9,6 +9,8 @@
 namespace RLConfig
 {
 
+using ValidationResult = DeployManifestValidationResult;
+
 namespace
 {
 
