@@ -65,7 +65,7 @@ int main()
     RequireContains(config_content, "model_name: \"policy_dogonly_20260401_9500.pt\"", config_file);
     RequireContains(config_content, "num_observations: 260", config_file);
     RequireContains(config_content, "observations: [\"lin_vel\", \"ang_vel\", \"gravity_vec\", \"commands\", \"dof_pos\", \"dof_vel\", \"actions\", \"height_scan\", \"arm_joint_command\", \"gripper_command\"]", config_file);
-    RequireContains(config_content, "fixed_cmd_x: 0.3", config_file);
+    RequireContains(config_content, "fixed_cmd_x: 0.5", config_file);
     RequireContains(config_content, "fixed_cmd_y: 0.0", config_file);
     RequireContains(config_content, "fixed_cmd_yaw: 0.0", config_file);
     RequireContains(config_content, "key1_prefer_navigation_mode: false", config_file);
@@ -76,8 +76,8 @@ int main()
     RequireContains(config_content, "arm_bridge_shadow_feedback_enabled: false", config_file);
     RequireContains(config_content, "arm_hold_enabled: false", config_file);
     RequireContains(config_content, "key2_prefer_topic_command: true", config_file);
-    RequireContains(config_content, "arm_hold_pose:", config_file);
-    RequireContains(config_content, "arm_key_pose:", config_file);
+    RequireContains(config_content, "arm_hold_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]", config_file);
+    RequireContains(config_content, "arm_key_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]", config_file);
 
     std::cout << "go2_x5 config split test passed." << std::endl;
     return 0;

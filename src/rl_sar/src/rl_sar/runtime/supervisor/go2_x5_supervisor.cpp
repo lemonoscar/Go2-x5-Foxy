@@ -321,6 +321,17 @@ TransitionResult Supervisor::Step(const WatchdogInput& input)
         this->has_policy_seq_ = true;
     }
 
+    if (input.estop)
+    {
+        return this->TransitionTo(
+            Mode::FaultLatched,
+            ReasonCode::Estop,
+            input,
+            watchdog,
+            0,
+            EventType::Estop);
+    }
+
     if (this->config_.require_manifest_valid && !watchdog.manifest_valid)
     {
         return this->TransitionTo(
@@ -395,16 +406,6 @@ TransitionResult Supervisor::Step(const WatchdogInput& input)
         break;
 
     case Mode::Ready:
-        if (input.estop)
-        {
-            return this->TransitionTo(
-                Mode::FaultLatched,
-                ReasonCode::Estop,
-                input,
-                watchdog,
-                0,
-                EventType::Estop);
-        }
         if (input.soft_stop_request)
         {
             return this->TransitionTo(
@@ -448,16 +449,6 @@ TransitionResult Supervisor::Step(const WatchdogInput& input)
         break;
 
     case Mode::ManualArm:
-        if (input.estop)
-        {
-            return this->TransitionTo(
-                Mode::FaultLatched,
-                ReasonCode::Estop,
-                input,
-                watchdog,
-                0,
-                EventType::Estop);
-        }
         if (input.soft_stop_request || input.operator_disable)
         {
             return this->TransitionTo(
@@ -481,16 +472,6 @@ TransitionResult Supervisor::Step(const WatchdogInput& input)
         break;
 
     case Mode::RlDogOnlyActive:
-        if (input.estop)
-        {
-            return this->TransitionTo(
-                Mode::FaultLatched,
-                ReasonCode::Estop,
-                input,
-                watchdog,
-                0,
-                EventType::Estop);
-        }
         if (input.soft_stop_request || input.operator_disable)
         {
             return this->TransitionTo(
@@ -546,16 +527,6 @@ TransitionResult Supervisor::Step(const WatchdogInput& input)
         break;
 
     case Mode::DegradedArm:
-        if (input.estop)
-        {
-            return this->TransitionTo(
-                Mode::FaultLatched,
-                ReasonCode::Estop,
-                input,
-                watchdog,
-                0,
-                EventType::Estop);
-        }
         if (this->DegradedTimedOut(input))
         {
             return this->TransitionTo(
@@ -579,16 +550,6 @@ TransitionResult Supervisor::Step(const WatchdogInput& input)
         break;
 
     case Mode::DegradedBody:
-        if (input.estop)
-        {
-            return this->TransitionTo(
-                Mode::FaultLatched,
-                ReasonCode::Estop,
-                input,
-                watchdog,
-                0,
-                EventType::Estop);
-        }
         if (this->DegradedTimedOut(input))
         {
             return this->TransitionTo(
@@ -612,16 +573,6 @@ TransitionResult Supervisor::Step(const WatchdogInput& input)
         break;
 
     case Mode::SoftStop:
-        if (input.estop)
-        {
-            return this->TransitionTo(
-                Mode::FaultLatched,
-                ReasonCode::Estop,
-                input,
-                watchdog,
-                0,
-                EventType::Estop);
-        }
         if (this->SoftStopTimedOut(input))
         {
             return this->TransitionTo(

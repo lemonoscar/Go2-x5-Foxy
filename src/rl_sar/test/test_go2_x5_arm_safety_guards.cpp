@@ -1,127 +1,104 @@
-#include <fstream>
+#include <cstdlib>
 #include <iostream>
-#include <sstream>
-#include <string>
+#include <vector>
 
-namespace {
+#include "rl_sar/go2x5/arm/go2_x5_arm_output_guard.hpp"
 
-std::string ReadAll(const std::string& path)
+namespace
 {
-    std::ifstream ifs(path);
-    if (!ifs.is_open())
-    {
-        std::cerr << "Failed to open: " << path << std::endl;
-        std::abort();
-    }
-    std::ostringstream oss;
-    oss << ifs.rdbuf();
-    return oss.str();
-}
 
-void RequireContains(const std::string& content, const std::string& needle, const std::string& file)
+void Require(bool condition, const char* message)
 {
-    if (content.find(needle) == std::string::npos)
+    if (!condition)
     {
-        std::cerr << "Missing expected snippet in " << file << ": " << needle << std::endl;
+        std::cerr << message << '\n';
         std::abort();
     }
 }
 
-void RequireNotContains(const std::string& content, const std::string& needle, const std::string& file)
+void RequireEqual(const std::vector<float>& actual,
+                  const std::vector<float>& expected,
+                  const char* message)
 {
-    if (content.find(needle) != std::string::npos)
+    if (actual != expected)
     {
-        std::cerr << "Unexpected snippet in " << file << ": " << needle << std::endl;
+        std::cerr << message << '\n';
         std::abort();
     }
 }
 
-}  // namespace
+Go2X5ArmOutputGuard::Context MakeContext()
+{
+    Go2X5ArmOutputGuard::Context context;
+    context.num_dofs = 8;
+    context.arm_joint_start_index = 2;
+    context.arm_command_size = 3;
+    context.arm_hold_position = {10.0f, 11.0f, 12.0f};
+    return context;
+}
+
+} // namespace
 
 int main()
 {
-    const std::string source_dir = RL_SAR_SOURCE_DIR;
-    const std::string real_file = source_dir + "/src/rl_sar/core/rl_real_go2_x5.cpp";
-    const std::string state_io_file = source_dir + "/src/rl_sar/go2x5/state/go2_x5_state_io.cpp";
-    const std::string state_management_file = source_dir + "/src/rl_sar/go2x5/state/go2_x5_state_management.cpp";
-    const std::string utility_file = source_dir + "/src/rl_sar/go2x5/state/go2_x5_utility.cpp";
-    const std::string safe_shutdown_file = source_dir + "/src/rl_sar/go2x5/safety/go2_x5_safe_shutdown.cpp";
-    const std::string ros_file = source_dir + "/src/rl_sar/go2x5/comm/go2_x5_ros.cpp";
-    const std::string sdk_file = source_dir + "/library/core/rl_sdk/rl_sdk.cpp";
-    const std::string operator_file = source_dir + "/src/rl_sar/go2x5/control/go2_x5_operator_control.cpp";
-    const std::string runtime_file = source_dir + "/src/rl_sar/go2x5/arm/go2_x5_arm_runtime.cpp";
-    const std::string bridge_runtime_file = source_dir + "/src/rl_sar/go2x5/arm/go2_x5_arm_bridge_runtime.cpp";
-    const std::string output_guard_file = source_dir + "/src/rl_sar/go2x5/arm/go2_x5_arm_output_guard.cpp";
-    const std::string bridge_file = source_dir + "/scripts/arx_x5_bridge.py";
-    const std::string base_file = source_dir + "/../../policy/go2_x5/base.yaml";
-    const std::string config_file = source_dir + "/../../policy/go2_x5/robot_lab/config.yaml";
+    {
+        auto context = MakeContext();
+        context.arm_hold_enabled = true;
 
-    const std::string real_content = ReadAll(real_file);
-    const std::string state_io_content = ReadAll(state_io_file);
-    const std::string state_management_content = ReadAll(state_management_file);
-    const std::string utility_content = ReadAll(utility_file);
-    const std::string safe_shutdown_content = ReadAll(safe_shutdown_file);
-    const std::string ros_content = ReadAll(ros_file);
-    const std::string sdk_content = ReadAll(sdk_file);
-    const std::string operator_content = ReadAll(operator_file);
-    const std::string runtime_content = ReadAll(runtime_file);
-    const std::string bridge_runtime_content = ReadAll(bridge_runtime_file);
-    const std::string output_guard_content = ReadAll(output_guard_file);
-    const std::string bridge_content = ReadAll(bridge_file);
-    const std::string base_content = ReadAll(base_file);
-    const std::string config_content = ReadAll(config_file);
+        std::vector<float> output_pos = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
+        std::vector<float> output_vel = {0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f};
+        Require(Go2X5ArmOutputGuard::ApplyOutputGuards(&output_pos, &output_vel, context),
+                "enabled arm hold should apply output guard");
+        RequireEqual(output_pos, {0.0f, 1.0f, 10.0f, 11.0f, 12.0f, 5.0f, 6.0f, 7.0f},
+                     "enabled arm hold should override only arm joint positions");
+        RequireEqual(output_vel, {0.1f, 0.2f, 0.0f, 0.0f, 0.0f, 0.6f, 0.7f, 0.8f},
+                     "enabled arm hold should zero only arm joint velocities");
+    }
 
-    RequireContains(real_content, "ClipWholeBodyCommand", real_file);
-    RequireContains(state_io_content, "Arm passthrough blocked outside RL locomotion", state_io_file);
-    RequireContains(safe_shutdown_content, "arm_safe_shutdown_active.store(true)", safe_shutdown_file);
-    RequireContains(real_content, "Policy action dimension mismatch", real_file);
-    RequireContains(utility_content, "Policy inference frequency:", utility_file);
-    RequireContains(real_content, "HandleLoopException", real_file);
-    RequireContains(ros_content, "Ignore /cmd_vel in exclusive real deploy control mode", ros_file);
-    RequireContains(state_management_content, "arm_bridge_state_from_backend", state_management_file);
-    RequireContains(state_io_content, "shadow-only state", state_io_file);
-    RequireContains(state_io_content, "Arm bridge state is missing or stale. Ignoring shadow arm feedback until bridge recovers.", state_io_file);
-    RequireContains(state_io_content, "Ignoring shadow arm feedback until a real backend state arrives.", state_io_file);
-    RequireContains(real_content, "CaptureArmRuntimeStateLocked", real_file);
-    RequireContains(runtime_content, "BuildInitialCommandState", runtime_file);
-    RequireContains(runtime_content, "StepSmoothedCommand", runtime_file);
-    RequireContains(bridge_runtime_content, "ReconcileConfiguration", bridge_runtime_file);
-    RequireContains(bridge_runtime_content, "EvaluateReadDecision", bridge_runtime_file);
-    RequireContains(output_guard_content, "ApplyOutputGuards", output_guard_file);
-    RequireContains(output_guard_content, "ShouldApplyStaleBridgeOverride", output_guard_file);
-    RequireContains(real_content, "RestoreArmRuntimeStateLocked", real_file);
-    RequireContains(real_content, "Go2X5ArmOutputGuard::ApplyOutputGuards", real_file);
-    RequireContains(operator_content, "real_deploy_exclusive_keyboard_control", operator_file);
-    RequireContains(operator_content, "key1_prefer_navigation_mode", operator_file);
-    RequireContains(real_content, "key2_prefer_topic_command", real_file);
-    RequireContains(sdk_content, "Key[1] pressed: RL policy mode ON (exclusive real deploy control)", sdk_file);
-    RequireContains(sdk_content, "this->control.navigation_mode = false;", sdk_file);
-    RequireContains(bridge_content, "def _clip_command(", bridge_file);
-    RequireContains(bridge_content, "Clip arm cmd to deploy limits", bridge_file);
-    RequireContains(bridge_content, "self.state_from_backend = state_from_backend", bridge_file);
-    RequireContains(bridge_content, "self.declare_parameter(\"joint_pos_min\", [])", bridge_file);
-    RequireContains(base_content, "joint_lower_limits", base_file);
-    RequireContains(base_content, "joint_upper_limits", base_file);
-    RequireContains(base_content, "joint_velocity_limits", base_file);
-    RequireContains(base_content, "arm_command_size: 6", base_file);
-    RequireContains(base_content, "arm_joint_command_topic: \"/arm_joint_pos_cmd\"", base_file);
-    RequireContains(base_content, "key2_prefer_topic_command: true", base_file);
-    RequireContains(base_content, "arm_hold_pose:", base_file);
-    RequireContains(base_content, "arm_key_pose:", base_file);
-    RequireContains(base_content, "policy_inference_log_enabled: true", base_file);
-    RequireNotContains(base_content, "real_deploy_exclusive_keyboard_control: true", base_file);
-    RequireContains(base_content, "arm_bridge_require_live_state: true", base_file);
-    RequireContains(config_content, "arm_bridge_require_live_state: true", config_file);
-    RequireContains(config_content, "arm_bridge_shadow_feedback_enabled: false", config_file);
-    RequireContains(config_content, "real_deploy_exclusive_keyboard_control: true", config_file);
-    RequireContains(config_content, "policy_inference_log_enabled: true", config_file);
-    RequireContains(config_content, "fixed_cmd_x: 0.3", config_file);
-    RequireContains(config_content, "fixed_cmd_y: 0.0", config_file);
-    RequireContains(config_content, "fixed_cmd_yaw: 0.0", config_file);
-    RequireContains(config_content, "key1_prefer_navigation_mode: false", config_file);
-    RequireContains(config_content, "key2_prefer_topic_command: true", config_file);
-    RequireContains(config_content, "arm_hold_enabled: false", config_file);
+    {
+        auto context = MakeContext();
+        context.arm_hold_enabled = false;
+        context.arm_split_control_enabled = true;
+        context.arm_bridge_require_state = true;
+        context.arm_bridge_state_fresh = false;
 
-    std::cout << "go2_x5 real deploy safety guards test passed." << std::endl;
+        std::vector<float> output_pos = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
+        std::vector<float> output_vel = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+        Require(Go2X5ArmOutputGuard::ApplyOutputGuards(&output_pos, &output_vel, context),
+                "stale required arm bridge state should force hold override");
+        RequireEqual(output_pos, {0.0f, 1.0f, 10.0f, 11.0f, 12.0f, 5.0f, 6.0f, 7.0f},
+                     "stale bridge override should hold arm pose");
+    }
+
+    {
+        auto context = MakeContext();
+        context.arm_hold_enabled = false;
+        context.arm_split_control_enabled = true;
+        context.arm_bridge_require_state = true;
+        context.arm_bridge_state_fresh = true;
+
+        std::vector<float> output_pos = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
+        std::vector<float> output_vel = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+        Require(!Go2X5ArmOutputGuard::ApplyOutputGuards(&output_pos, &output_vel, context),
+                "fresh arm bridge state with hold disabled should not override output");
+        RequireEqual(output_pos, {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f},
+                     "fresh bridge state should leave arm output unchanged");
+    }
+
+    {
+        auto context = MakeContext();
+        context.num_dofs = 4;
+        context.arm_joint_start_index = 3;
+        context.arm_command_size = 2;
+        context.arm_hold_enabled = true;
+        context.arm_hold_position = {1.0f, 2.0f};
+
+        std::vector<float> output_pos = {0.0f, 1.0f, 2.0f, 3.0f};
+        std::vector<float> output_vel = {0.0f, 0.0f, 0.0f, 0.0f};
+        Require(!Go2X5ArmOutputGuard::ApplyOutputGuards(&output_pos, &output_vel, context),
+                "invalid arm joint range should not apply output guard");
+    }
+
+    std::cout << "go2_x5 arm safety guards behavior test passed." << std::endl;
     return 0;
 }

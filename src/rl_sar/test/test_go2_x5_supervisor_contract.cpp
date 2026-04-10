@@ -224,6 +224,59 @@ void TestEstopAndFaultResetInputs()
         "operator");
 }
 
+void TestEstopIsGlobalAndLatched()
+{
+    {
+        Supervisor supervisor;
+        supervisor.NoteHeartbeat(4'200'000);
+        WatchdogInput boot_estop = MakeBootInput(4'200'000, 60);
+        boot_estop.estop = true;
+        auto result = supervisor.Step(boot_estop);
+        Require(result.current_mode == Mode::FaultLatched, "BOOT estop should latch fault");
+        RequireLastEvent(supervisor, EventType::Estop, Mode::Boot, Mode::FaultLatched, ReasonCode::Estop,
+            "operator");
+    }
+
+    {
+        Supervisor supervisor;
+        supervisor.NoteHeartbeat(4'300'000);
+        auto boot = supervisor.Step(MakeBootInput(4'300'000, 70));
+        Require(boot.current_mode == Mode::Probe, "BOOT -> PROBE setup failed");
+        supervisor.ClearEventLog();
+
+        WatchdogInput probe_estop = MakeHealthyInput(4'320'000, 71);
+        probe_estop.estop = true;
+        auto result = supervisor.Step(probe_estop);
+        Require(result.current_mode == Mode::FaultLatched, "PROBE estop should latch fault");
+        RequireLastEvent(supervisor, EventType::Estop, Mode::Probe, Mode::FaultLatched, ReasonCode::Estop,
+            "operator");
+    }
+
+    {
+        Supervisor supervisor;
+        supervisor.NoteHeartbeat(4'400'000);
+        auto boot = supervisor.Step(MakeBootInput(4'400'000, 80));
+        Require(boot.current_mode == Mode::Probe, "BOOT -> PROBE setup failed");
+        auto probe = supervisor.Step(MakeProbePassInput(4'420'000, 81));
+        Require(probe.current_mode == Mode::Passive, "PROBE -> PASSIVE setup failed");
+        supervisor.ClearEventLog();
+
+        WatchdogInput passive_estop = MakeHealthyInput(4'440'000, 82);
+        passive_estop.estop = true;
+        auto result = supervisor.Step(passive_estop);
+        Require(result.current_mode == Mode::FaultLatched, "PASSIVE estop should latch fault");
+        RequireLastEvent(supervisor, EventType::Estop, Mode::Passive, Mode::FaultLatched, ReasonCode::Estop,
+            "operator");
+
+        WatchdogInput reset_while_estop = MakeProbePassInput(4'460'000, 83);
+        reset_while_estop.estop = true;
+        reset_while_estop.fault_reset = true;
+        auto blocked = supervisor.Step(reset_while_estop);
+        Require(blocked.current_mode == Mode::FaultLatched,
+            "fault reset must not clear a still-asserted estop");
+    }
+}
+
 void TestManualArmRequestInput()
 {
     Supervisor supervisor;
@@ -322,6 +375,7 @@ int main()
     TestManifestValidityPath();
     TestSeqGapAndWatchdogStatus();
     TestEstopAndFaultResetInputs();
+    TestEstopIsGlobalAndLatched();
     TestManualArmRequestInput();
     TestRuntimeHealthInputPaths();
     std::cout << "test_go2_x5_supervisor_contract passed\n";

@@ -7,6 +7,106 @@
 
 namespace RLConfig {
 
+namespace {
+
+YAML::Node FindNestedNode(const YAML::Node& root,
+                          const std::vector<std::string>& keys,
+                          const size_t index = 0) {
+    if (index >= keys.size()) {
+        return root;
+    }
+    if (!root.IsDefined() || root.IsNull() || !root.IsMap()) {
+        return YAML::Node();
+    }
+    const YAML::Node child = root[keys[index]];
+    if (!child.IsDefined() || child.IsNull()) {
+        return YAML::Node();
+    }
+    return FindNestedNode(child, keys, index + 1);
+}
+
+std::vector<std::string> SplitDotKey(const std::string& key) {
+    std::vector<std::string> result;
+    std::stringstream ss(key);
+    std::string item;
+    while (std::getline(ss, item, '.')) {
+        if (!item.empty()) {
+            result.push_back(item);
+        }
+    }
+    return result;
+}
+
+void DeepMergeInto(YAML::Node& target, const YAML::Node& source) {
+    if (!source || !source.IsDefined()) {
+        return;
+    }
+
+    if (!source.IsMap()) {
+        target = YAML::Clone(source);
+        return;
+    }
+
+    if (!target || !target.IsDefined() || !target.IsMap()) {
+        target = YAML::Node(YAML::NodeType::Map);
+    }
+
+    for (const auto& kv : source) {
+        const std::string key = kv.first.as<std::string>();
+        const YAML::Node value = kv.second;
+        if (value && value.IsMap() && target[key] && target[key].IsMap()) {
+            YAML::Node child = target[key];
+            DeepMergeInto(child, value);
+            target[key] = child;
+        } else {
+            target[key] = YAML::Clone(value);
+        }
+    }
+}
+
+void SetNestedKey(YAML::Node& root,
+                  const std::vector<std::string>& keys,
+                  const YAML::Node& value,
+                  const size_t index = 0) {
+    if (index >= keys.size()) {
+        return;
+    }
+    if (!root || !root.IsDefined() || !root.IsMap()) {
+        root = YAML::Node(YAML::NodeType::Map);
+    }
+    if (index + 1 == keys.size()) {
+        root[keys[index]] = YAML::Clone(value);
+        return;
+    }
+    YAML::Node child = root[keys[index]];
+    if (!child || !child.IsDefined() || !child.IsMap()) {
+        child = YAML::Node(YAML::NodeType::Map);
+    }
+    SetNestedKey(child, keys, value, index + 1);
+    root[keys[index]] = child;
+}
+
+bool RemoveNestedKey(YAML::Node& root, const std::vector<std::string>& keys, const size_t index = 0) {
+    if (!root || !root.IsDefined() || !root.IsMap() || index >= keys.size()) {
+        return false;
+    }
+    if (index + 1 == keys.size()) {
+        return root.remove(keys[index]);
+    }
+
+    YAML::Node child = root[keys[index]];
+    if (!child || !child.IsDefined() || !child.IsMap()) {
+        return false;
+    }
+    const bool removed = RemoveNestedKey(child, keys, index + 1);
+    if (removed && child.IsMap() && child.size() == 0) {
+        root.remove(keys[index]);
+    }
+    return removed;
+}
+
+} // namespace
+
 // ============================================================================
 // ConfigSchema Implementation
 // ============================================================================
@@ -27,30 +127,8 @@ void ConfigSchema::AddValidator(const std::string& key,
 
 ValidationResult ConfigSchema::Validate(const YAML::Node& config) const {
     for (const auto& desc : descriptors_) {
-        // Check if key exists using dot notation
-        YAML::Node current = config;
-        std::string full_path;
-        bool path_valid = true;
-
-        std::string key = desc.key;
-        size_t pos = 0;
-        while ((pos = key.find('.')) != std::string::npos) {
-            std::string part = key.substr(0, pos);
-            if (!full_path.empty()) full_path += ".";
-            full_path += part;
-
-            if (!current || !current.IsMap()) {
-                path_valid = false;
-                break;
-            }
-            current = current[part];
-            key.erase(0, pos + 1);
-        }
-
-        if (!full_path.empty()) full_path += ".";
-        full_path += key;
-
-        if (!path_valid || !current) {
+        YAML::Node current = FindNestedNode(config, SplitDotKey(desc.key));
+        if (!current.IsDefined() || current.IsNull()) {
             if (desc.is_required) {
                 return ValidationResult::Error(
                     "Required configuration key is missing: " + desc.key,
@@ -100,7 +178,7 @@ ValidationResult ConfigLoader::LoadLayerFromFile(ConfigLayer layer,
 
 ValidationResult ConfigLoader::LoadLayerFromNode(ConfigLayer layer,
                                                 const YAML::Node& node) {
-    if (!node || !node.IsDefined()) {
+    if (!node.IsDefined() || node.IsNull()) {
         return ValidationResult::Error("Invalid YAML node", "");
     }
 
@@ -124,26 +202,11 @@ void ConfigLoader::Set(const std::string& key, const YAML::Node& value) {
     // Split the key into parts
     auto keys = SplitKey(key);
 
-    // Navigate and set the value
-    // YAML-CPP nodes are reference-counted, so assigning creates a reference
     if (keys.empty()) {
         return;  // Invalid key
     }
 
-    // Build the path and set the value
-    YAML::Node current = override_layer;
-    for (size_t i = 0; i < keys.size() - 1; ++i) {
-        const std::string& k = keys[i];
-        // Ensure the intermediate node exists and is a map
-        if (!current[k] || !current[k].IsMap()) {
-            current[k] = YAML::Node(YAML::NodeType::Map);
-        }
-        // Move to the next level (this creates a new shared reference)
-        current = current[k];
-    }
-    // Set the final value
-    current[keys.back()] = value;
-
+    SetNestedKey(override_layer, keys, value);
     merged_dirty_ = true;
 }
 
@@ -151,20 +214,8 @@ bool ConfigLoader::Has(const std::string& key) const {
     std::lock_guard<std::mutex> lock(mutex_);
 
     YAML::Node merged = MergeLayers();
-    auto keys = SplitKey(key);
-
-    YAML::Node current = merged;
-    for (const auto& k : keys) {
-        if (!current || !current.IsMap()) {
-            return false;
-        }
-        current = current[k];
-        if (!current || !current.IsDefined()) {
-            return false;
-        }
-    }
-
-    return true;
+    YAML::Node node = FindNestedNode(merged, SplitKey(key));
+    return node.IsDefined() && !node.IsNull();
 }
 
 YAML::Node ConfigLoader::GetMergedNode() const {
@@ -196,21 +247,10 @@ YAML::Node ConfigLoader::MergeLayers() const {
         return cached_merged_;
     }
 
-    YAML::Node merged;
+    YAML::Node merged(YAML::NodeType::Map);
     for (const auto& [layer, node] : layers_) {
         if (!node || !node.IsDefined()) continue;
-
-        // Merge node into merged (recursively for maps)
-        if (node.IsMap()) {
-            if (!merged) {
-                merged = YAML::Node(YAML::NodeType::Map);
-            }
-            for (const auto& kv : node) {
-                merged[kv.first.Scalar()] = kv.second;
-            }
-        } else {
-            merged = node;
-        }
+        DeepMergeInto(merged, node);
     }
 
     cached_merged_ = merged;
@@ -234,14 +274,7 @@ std::vector<std::string> ConfigLoader::SplitKey(const std::string& key) const {
 
 YAML::Node ConfigLoader::GetNestedNode(YAML::Node& root,
                                        const std::vector<std::string>& keys) const {
-    YAML::Node current = root;
-    for (const auto& k : keys) {
-        if (!current || !current.IsMap()) {
-            return YAML::Node();
-        }
-        current = current[k];
-    }
-    return current;
+    return FindNestedNode(root, keys);
 }
 
 // ============================================================================
@@ -253,9 +286,9 @@ int ConfigLoader::Get<int>(const std::string& key, const int& default_value) con
     std::lock_guard<std::mutex> lock(mutex_);
     YAML::Node merged = MergeLayers();
     auto keys = SplitKey(key);
-    YAML::Node node = GetNestedNode(merged, keys);
+    YAML::Node node = FindNestedNode(merged, keys);
 
-    if (node && node.IsDefined() && !node.IsNull()) {
+    if (node.IsDefined() && !node.IsNull()) {
         try {
             return node.as<int>();
         } catch (...) {
@@ -270,9 +303,9 @@ float ConfigLoader::Get<float>(const std::string& key, const float& default_valu
     std::lock_guard<std::mutex> lock(mutex_);
     YAML::Node merged = MergeLayers();
     auto keys = SplitKey(key);
-    YAML::Node node = GetNestedNode(merged, keys);
+    YAML::Node node = FindNestedNode(merged, keys);
 
-    if (node && node.IsDefined() && !node.IsNull()) {
+    if (node.IsDefined() && !node.IsNull()) {
         try {
             return node.as<float>();
         } catch (...) {
@@ -287,9 +320,9 @@ double ConfigLoader::Get<double>(const std::string& key, const double& default_v
     std::lock_guard<std::mutex> lock(mutex_);
     YAML::Node merged = MergeLayers();
     auto keys = SplitKey(key);
-    YAML::Node node = GetNestedNode(merged, keys);
+    YAML::Node node = FindNestedNode(merged, keys);
 
-    if (node && node.IsDefined() && !node.IsNull()) {
+    if (node.IsDefined() && !node.IsNull()) {
         try {
             return node.as<double>();
         } catch (...) {
@@ -304,9 +337,9 @@ bool ConfigLoader::Get<bool>(const std::string& key, const bool& default_value) 
     std::lock_guard<std::mutex> lock(mutex_);
     YAML::Node merged = MergeLayers();
     auto keys = SplitKey(key);
-    YAML::Node node = GetNestedNode(merged, keys);
+    YAML::Node node = FindNestedNode(merged, keys);
 
-    if (node && node.IsDefined() && !node.IsNull()) {
+    if (node.IsDefined() && !node.IsNull()) {
         try {
             return node.as<bool>();
         } catch (...) {
@@ -322,9 +355,9 @@ std::string ConfigLoader::Get<std::string>(const std::string& key,
     std::lock_guard<std::mutex> lock(mutex_);
     YAML::Node merged = MergeLayers();
     auto keys = SplitKey(key);
-    YAML::Node node = GetNestedNode(merged, keys);
+    YAML::Node node = FindNestedNode(merged, keys);
 
-    if (node && node.IsDefined() && node.IsScalar()) {
+    if (node.IsDefined() && node.IsScalar()) {
         try {
             return node.as<std::string>();
         } catch (...) {
@@ -340,9 +373,9 @@ std::vector<int> ConfigLoader::Get<std::vector<int>>(const std::string& key,
     std::lock_guard<std::mutex> lock(mutex_);
     YAML::Node merged = MergeLayers();
     auto keys = SplitKey(key);
-    YAML::Node node = GetNestedNode(merged, keys);
+    YAML::Node node = FindNestedNode(merged, keys);
 
-    if (node && node.IsDefined() && node.IsSequence()) {
+    if (node.IsDefined() && node.IsSequence()) {
         try {
             return node.as<std::vector<int>>();
         } catch (...) {
@@ -358,9 +391,9 @@ std::vector<float> ConfigLoader::Get<std::vector<float>>(const std::string& key,
     std::lock_guard<std::mutex> lock(mutex_);
     YAML::Node merged = MergeLayers();
     auto keys = SplitKey(key);
-    YAML::Node node = GetNestedNode(merged, keys);
+    YAML::Node node = FindNestedNode(merged, keys);
 
-    if (node && node.IsDefined() && node.IsSequence()) {
+    if (node.IsDefined() && node.IsSequence()) {
         try {
             return node.as<std::vector<float>>();
         } catch (...) {
@@ -377,9 +410,9 @@ std::vector<std::string> ConfigLoader::Get<std::vector<std::string>>(
     std::lock_guard<std::mutex> lock(mutex_);
     YAML::Node merged = MergeLayers();
     auto keys = SplitKey(key);
-    YAML::Node node = GetNestedNode(merged, keys);
+    YAML::Node node = FindNestedNode(merged, keys);
 
-    if (node && node.IsDefined() && node.IsSequence()) {
+    if (node.IsDefined() && node.IsSequence()) {
         try {
             return node.as<std::vector<std::string>>();
         } catch (...) {
@@ -398,9 +431,9 @@ int ConfigLoader::GetRequired<int>(const std::string& key) const {
     std::lock_guard<std::mutex> lock(mutex_);
     YAML::Node merged = MergeLayers();
     auto keys = SplitKey(key);
-    YAML::Node node = GetNestedNode(merged, keys);
+    YAML::Node node = FindNestedNode(merged, keys);
 
-    if (!node || !node.IsDefined()) {
+    if (!node.IsDefined() || node.IsNull()) {
         throw std::runtime_error("Required configuration key not found: " + key);
     }
 
@@ -416,9 +449,9 @@ float ConfigLoader::GetRequired<float>(const std::string& key) const {
     std::lock_guard<std::mutex> lock(mutex_);
     YAML::Node merged = MergeLayers();
     auto keys = SplitKey(key);
-    YAML::Node node = GetNestedNode(merged, keys);
+    YAML::Node node = FindNestedNode(merged, keys);
 
-    if (!node || !node.IsDefined()) {
+    if (!node.IsDefined() || node.IsNull()) {
         throw std::runtime_error("Required configuration key not found: " + key);
     }
 
@@ -434,9 +467,9 @@ std::string ConfigLoader::GetRequired<std::string>(const std::string& key) const
     std::lock_guard<std::mutex> lock(mutex_);
     YAML::Node merged = MergeLayers();
     auto keys = SplitKey(key);
-    YAML::Node node = GetNestedNode(merged, keys);
+    YAML::Node node = FindNestedNode(merged, keys);
 
-    if (!node || !node.IsDefined()) {
+    if (!node.IsDefined() || node.IsNull()) {
         throw std::runtime_error("Required configuration key not found: " + key);
     }
 
@@ -545,9 +578,9 @@ ConfigOverrideGuard::ConfigOverrideGuard(ConfigLoader& loader,
         std::lock_guard<std::mutex> lock(loader_.mutex_);
         YAML::Node merged = loader_.MergeLayers();
         auto keys = loader_.SplitKey(key_);
-        YAML::Node existing = loader_.GetNestedNode(merged, keys);
+        YAML::Node existing = FindNestedNode(merged, keys);
 
-        if (existing && existing.IsDefined()) {
+        if (existing.IsDefined() && !existing.IsNull()) {
             previous_value_ = existing;
             has_previous_ = true;
         }
@@ -561,9 +594,10 @@ ConfigOverrideGuard::~ConfigOverrideGuard() {
     if (has_previous_) {
         loader_.Set(key_, previous_value_);
     } else {
-        // Need to remove the override - this is tricky with YAML
-        // For now, we'll just set it to a null node
-        loader_.Set(key_, YAML::Node());
+        std::lock_guard<std::mutex> lock(loader_.mutex_);
+        YAML::Node& override_layer = loader_.layers_[ConfigLayer::RuntimeOverride];
+        RemoveNestedKey(override_layer, loader_.SplitKey(key_));
+        loader_.merged_dirty_ = true;
     }
 }
 

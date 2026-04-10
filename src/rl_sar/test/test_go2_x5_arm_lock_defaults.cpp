@@ -1,56 +1,63 @@
-#include <cassert>
-#include <fstream>
+#include <cstdlib>
 #include <iostream>
-#include <sstream>
-#include <string>
+#include <vector>
 
-namespace {
+#include "rl_sar/go2x5/arm/go2_x5_arm_runtime.hpp"
 
-std::string ReadAll(const std::string& path)
+namespace
 {
-    std::ifstream ifs(path);
-    if (!ifs.is_open())
-    {
-        std::cerr << "Failed to open: " << path << std::endl;
-        std::abort();
-    }
-    std::ostringstream oss;
-    oss << ifs.rdbuf();
-    return oss.str();
-}
 
-void RequireContains(const std::string& content, const std::string& needle, const std::string& file)
+void Require(bool condition, const char* message)
 {
-    if (content.find(needle) == std::string::npos)
+    if (!condition)
     {
-        std::cerr << "Missing expected snippet in " << file << ": " << needle << std::endl;
+        std::cerr << message << '\n';
         std::abort();
     }
 }
 
-}  // namespace
+void RequireEqual(const std::vector<float>& actual,
+                  const std::vector<float>& expected,
+                  const char* message)
+{
+    if (actual != expected)
+    {
+        std::cerr << message << '\n';
+        std::abort();
+    }
+}
+
+} // namespace
 
 int main()
 {
-    const std::string source_dir = RL_SAR_SOURCE_DIR;
-    const std::string config_file = source_dir + "/../../policy/go2_x5/robot_lab/config.yaml";
-    const std::string fsm_file = source_dir + "/fsm_robot/fsm_go2_x5.hpp";
-    const std::string sdk_file = source_dir + "/library/core/rl_sdk/rl_sdk.cpp";
-    const std::string real_file = source_dir + "/src/rl_sar/core/rl_real_go2_x5.cpp";
+    Go2X5ArmRuntime::InitializationConfig config;
+    config.arm_command_size = 3;
+    config.arm_joint_start_index = 2;
+    config.arm_hold_enabled = false;
+    config.step_dt = 0.01f;
+    config.smoothing_time = 0.03f;
+    config.default_dof_pos = {0.0f, 1.0f, 10.0f, 11.0f, 12.0f, 5.0f};
 
-    const std::string config_content = ReadAll(config_file);
-    const std::string fsm_content = ReadAll(fsm_file);
-    const std::string sdk_content = ReadAll(sdk_file);
-    const std::string real_content = ReadAll(real_file);
+    auto state = Go2X5ArmRuntime::BuildInitialCommandState(config);
+    Require(state.arm_command_size == 3, "arm command size should come from initialization config");
+    Require(!state.arm_hold_enabled, "initial arm hold enabled flag should preserve config default");
+    Require(state.arm_command_initialized, "initial arm command should be initialized");
+    Require(!state.arm_topic_command_received, "initial arm topic command should not be marked received");
+    RequireEqual(state.arm_hold_position, {10.0f, 11.0f, 12.0f},
+                 "hold position should resolve from default dof arm segment");
+    RequireEqual(state.arm_joint_command_latest, state.arm_hold_position,
+                 "latest arm command should start at hold position");
 
-    RequireContains(config_content, "arm_lock: false", config_file);
-    RequireContains(fsm_content, "arm_joint_start_index", fsm_file);
-    RequireContains(fsm_content, "arm_lock_pose_runtime.assign(", fsm_file);
-    RequireContains(sdk_content, "arm_lock_pose_runtime_valid", sdk_file);
-    RequireContains(sdk_content, "arm_joint_start_index", sdk_file);
-    RequireContains(real_content, "arm_hold_enabled_local", real_file);
-    RequireContains(real_content, "arm_hold_position", real_file);
+    Go2X5ArmRuntime::ApplyHoldTarget(&state, {4.0f, 5.0f, 6.0f});
+    Require(state.arm_hold_enabled, "ApplyHoldTarget should enable arm hold");
+    RequireEqual(state.arm_hold_position, {4.0f, 5.0f, 6.0f},
+                 "ApplyHoldTarget should update hold pose");
+    RequireEqual(state.arm_joint_command_latest, {4.0f, 5.0f, 6.0f},
+                 "ApplyHoldTarget should update latest arm command");
+    RequireEqual(state.arm_command_smoothing_target, {4.0f, 5.0f, 6.0f},
+                 "ApplyHoldTarget should update smoothing target");
 
-    std::cout << "go2_x5 arm lock defaults test passed." << std::endl;
+    std::cout << "go2_x5 arm lock defaults behavior test passed." << std::endl;
     return 0;
 }

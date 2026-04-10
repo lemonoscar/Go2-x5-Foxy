@@ -585,12 +585,14 @@ if(USE_CMAKE AND BUILD_TESTING)
     target_link_libraries(test_go2_x5_launch_defaults ${YAML_CPP_LIBRARIES} Threads::Threads)
     add_test(NAME test_go2_x5_launch_defaults COMMAND test_go2_x5_launch_defaults)
 
-    add_executable(test_go2_x5_arm_lock_defaults test/test_go2_x5_arm_lock_defaults.cpp)
-    target_compile_definitions(test_go2_x5_arm_lock_defaults PRIVATE RL_SAR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_executable(test_go2_x5_arm_lock_defaults
+        test/test_go2_x5_arm_lock_defaults.cpp
+        src/rl_sar/go2x5/arm/go2_x5_arm_runtime.cpp)
     add_test(NAME test_go2_x5_arm_lock_defaults COMMAND test_go2_x5_arm_lock_defaults)
 
-    add_executable(test_go2_x5_arm_safety_guards test/test_go2_x5_arm_safety_guards.cpp)
-    target_compile_definitions(test_go2_x5_arm_safety_guards PRIVATE RL_SAR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_executable(test_go2_x5_arm_safety_guards
+        test/test_go2_x5_arm_safety_guards.cpp
+        src/rl_sar/go2x5/arm/go2_x5_arm_output_guard.cpp)
     add_test(NAME test_go2_x5_arm_safety_guards COMMAND test_go2_x5_arm_safety_guards)
 
     add_executable(test_go2_x5_safety_guard test/test_go2_x5_safety_guard.cpp src/rl_sar/go2x5/safety/go2_x5_safety_guard.cpp)

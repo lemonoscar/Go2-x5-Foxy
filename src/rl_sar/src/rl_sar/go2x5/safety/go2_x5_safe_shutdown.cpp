@@ -2,6 +2,7 @@
 #include "rl_sar/core/rl_real_go2_x5.hpp"
 #include "rl_sar/go2x5/config/go2_x5_config.hpp"
 #include "loop.hpp"
+#include <chrono>
 #include <thread>
 #include <cmath>
 
@@ -170,6 +171,13 @@ void RL_Real_Go2X5::ExecuteSafeShutdownSequence()
             this->arm_topic_command_latest = this->arm_hold_position;
             this->arm_topic_command_received = true;
             this->arm_hold_enabled = true;
+            const uint64_t now_ns = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count());
+            this->arm_joint_command_source_monotonic_ns_ = now_ns;
+            this->arm_joint_command_publish_monotonic_ns_ = now_ns;
+            this->arm_joint_command_expire_ns_ = 0;
+            ++this->arm_joint_command_seq_;
         }
     }
 

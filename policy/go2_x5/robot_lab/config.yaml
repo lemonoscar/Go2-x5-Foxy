@@ -61,7 +61,7 @@ go2_x5/robot_lab:
   cmd_vel_alpha: 0.2
   joystick_deadband: 0.05
   # Key[1] fixed command (x forward, y lateral, yaw)
-  fixed_cmd_x: 0.3
+  fixed_cmd_x: 0.5
   fixed_cmd_y: 0.0
   fixed_cmd_yaw: 0.0
   # Key[1] behavior:
@@ -121,12 +121,12 @@ go2_x5/robot_lab:
   # When arm pose command is active (Key[2]), lock base pose to avoid spinning
   arm_lock_base_on_pose: false
   # Fixed arm hold pose (used as RL command + joint hold)
-  arm_hold_pose: [0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  arm_hold_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]
   arm_command_smoothing_time: 15.0
   # MuJoCo arm output filter (EMA). Smaller = smoother.
   arm_output_filter_alpha: 0.02
   # Key[2] fallback pose when no valid /arm_joint_pos_cmd target has been received yet.
-  arm_key_pose: [0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  arm_key_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]
   # Each pose has 6 values (arm_joint1..6), total length = arm_sequence_steps * 6
   arm_sequence_interval: 2.0
   arm_sequence_steps: 3

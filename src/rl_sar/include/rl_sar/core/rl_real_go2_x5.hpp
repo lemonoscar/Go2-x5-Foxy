@@ -281,11 +281,18 @@ private:
                                       const std::vector<float>& tau,
                                       const char* context) const;
     void HandleArmJointCommandData(const std::vector<float>& data, const char* context);
+    void HandleArmJointCommandData(const std::vector<float>& data,
+                                   const char* context,
+                                   uint64_t source_monotonic_ns,
+                                   uint64_t publish_monotonic_ns,
+                                   uint64_t command_expire_ns,
+                                   uint64_t seq);
     void HandleArmBridgeStateData(const std::vector<float>& data,
                                   bool state_from_backend,
                                   const char* context,
                                   bool has_transport_seq = false,
-                                  uint64_t transport_seq = 0);
+                                  uint64_t transport_seq = 0,
+                                  uint64_t source_monotonic_ns = 0);
     void HandleArmJointCommandFrame(const rl_sar::protocol::ArmCommandFrame& frame,
                                     const char* context);
     void HandleArmBridgeStateFrame(const rl_sar::protocol::ArmStateFrame& frame,
@@ -321,6 +328,10 @@ private:
     std::vector<float> arm_joint_command_latest;
     std::vector<float> arm_topic_command_latest;
     bool arm_topic_command_received = false;
+    uint64_t arm_joint_command_source_monotonic_ns_ = 0;
+    uint64_t arm_joint_command_publish_monotonic_ns_ = 0;
+    uint64_t arm_joint_command_expire_ns_ = 0;
+    uint64_t arm_joint_command_seq_ = 0;
     std::vector<float> arm_hold_position;
     std::vector<float> arm_command_smoothing_start;
     std::vector<float> arm_command_smoothing_target;
@@ -368,6 +379,7 @@ private:
     bool policy_inference_log_enabled = true;
     float last_policy_inference_hz = 0.0f;
     std::chrono::steady_clock::time_point last_policy_inference_stamp{};
+    std::atomic<bool> operator_rl_enable_requested_{false};
     std::atomic<bool> operator_estop_requested_{false};
     std::atomic<bool> operator_fault_reset_requested_{false};
     std::atomic<bool> operator_manual_arm_request_{false};

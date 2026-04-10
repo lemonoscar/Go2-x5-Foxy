@@ -77,6 +77,51 @@ uint64_t TimePointAgeUs(const std::chrono::steady_clock::time_point& stamp,
         std::chrono::duration_cast<std::chrono::microseconds>(now - stamp).count());
 }
 
+uint64_t TimePointToMonotonicNs(const std::chrono::steady_clock::time_point& stamp,
+                                const uint64_t fallback_ns)
+{
+    if (stamp.time_since_epoch().count() == 0)
+    {
+        return fallback_ns;
+    }
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            stamp.time_since_epoch()).count());
+}
+
+bool IsPassiveBodyOutputMode(const Go2X5Supervisor::Mode mode)
+{
+    switch (mode)
+    {
+    case Go2X5Supervisor::Mode::Boot:
+    case Go2X5Supervisor::Mode::Probe:
+    case Go2X5Supervisor::Mode::Passive:
+    case Go2X5Supervisor::Mode::SoftStop:
+    case Go2X5Supervisor::Mode::FaultLatched:
+        return true;
+    case Go2X5Supervisor::Mode::Ready:
+    case Go2X5Supervisor::Mode::RlDogOnlyActive:
+    case Go2X5Supervisor::Mode::ManualArm:
+    case Go2X5Supervisor::Mode::DegradedArm:
+    case Go2X5Supervisor::Mode::DegradedBody:
+        return false;
+    }
+    return true;
+}
+
+bool IsPassiveBodyJointCommand(const float q,
+                               const float dq,
+                               const float kp,
+                               const float kd,
+                               const float tau)
+{
+    return q == static_cast<float>(PosStopF) &&
+           dq == static_cast<float>(VelStopF) &&
+           std::fabs(kp) <= 1e-6f &&
+           std::fabs(kd) <= 1e-6f &&
+           std::fabs(tau) <= 1e-6f;
+}
+
 bool ParseBoolArgValue(const std::string& raw_value, const bool fallback)
 {
     const std::string value = ToLowerCopy(raw_value);
@@ -951,8 +996,11 @@ Go2X5Supervisor::WatchdogInput RL_Real_Go2X5::BuildSupervisorInput() const
     input.estop = this->operator_estop_requested_.load(std::memory_order_relaxed);
     input.soft_stop_request = this->arm_safe_shutdown_active.load();
     input.fault_reset = this->operator_fault_reset_requested_.load(std::memory_order_relaxed);
-    input.operator_enable = this->control.navigation_mode;
-    input.operator_disable = !this->control.navigation_mode;
+    const bool operator_rl_enabled =
+        this->operator_rl_enable_requested_.load(std::memory_order_relaxed) ||
+        this->control.navigation_mode;
+    input.operator_enable = operator_rl_enabled;
+    input.operator_disable = !operator_rl_enabled;
     input.manual_arm_request = this->operator_manual_arm_request_.load(std::memory_order_relaxed);
     const auto& supervisor_config = this->supervisor_->config();
     input.allow_recover = this->manifest_valid_ &&
@@ -962,10 +1010,8 @@ Go2X5Supervisor::WatchdogInput RL_Real_Go2X5::BuildSupervisorInput() const
     input.probe_pass = input.manifest_valid &&
         input.has_body_state_seq &&
         input.has_arm_state_seq &&
-        input.has_policy_seq &&
         input.body_state_age_us <= supervisor_config.body_state_stale_us &&
-        input.arm_state_age_us <= supervisor_config.arm_state_stale_us &&
-        input.policy_age_us <= supervisor_config.policy_stale_us;
+        input.arm_state_age_us <= supervisor_config.arm_state_stale_us;
     input.probe_fail = !input.manifest_valid;
     return input;
 }
@@ -1002,6 +1048,8 @@ rl_sar::runtime::coordinator::Input RL_Real_Go2X5::BuildCoordinatorInput(
         frame.dds_ok = this->body_dds_write_ok_runtime_.load(std::memory_order_relaxed) ? 1U : 0U;
         {
             std::lock_guard<std::mutex> lock(this->unitree_state_mutex);
+            frame.header.source_monotonic_ns =
+                TimePointToMonotonicNs(this->body_state_stamp_, now_monotonic_ns);
             frame.lowstate_age_us = static_cast<uint32_t>(
                 std::min<uint64_t>(TimePointAgeUs(this->body_state_stamp_, now_tp),
                                    std::numeric_limits<uint32_t>::max()));
@@ -1033,9 +1081,11 @@ rl_sar::runtime::coordinator::Input RL_Real_Go2X5::BuildCoordinatorInput(
     }
 
     std::vector<float> latest_arm_target;
+    uint64_t latest_arm_target_seq = 0;
     {
         std::lock_guard<std::mutex> lock(this->arm_command_mutex);
         latest_arm_target = this->arm_joint_command_latest;
+        latest_arm_target_seq = this->arm_joint_command_seq_;
         if (latest_arm_target.size() != static_cast<size_t>(this->arm_joint_count))
         {
             latest_arm_target = this->arm_hold_position;
@@ -1051,7 +1101,8 @@ rl_sar::runtime::coordinator::Input RL_Real_Go2X5::BuildCoordinatorInput(
             auto& frame = input.arm_state;
             frame.header.msg_type = rl_sar::protocol::FrameType::ArmState;
             frame.header.seq = this->arm_state_seq_;
-            frame.header.source_monotonic_ns = now_monotonic_ns;
+            frame.header.source_monotonic_ns =
+                TimePointToMonotonicNs(this->arm_bridge_state_stamp, now_monotonic_ns);
             frame.header.publish_monotonic_ns = now_monotonic_ns;
             frame.header.mode = static_cast<uint16_t>(input.mode);
             frame.header.validity_flags = rl_sar::protocol::kValidityPayloadValid;
@@ -1068,7 +1119,7 @@ rl_sar::runtime::coordinator::Input RL_Real_Go2X5::BuildCoordinatorInput(
                 std::min<uint64_t>(TimePointAgeUs(this->arm_bridge_state_stamp, now_tp),
                                    std::numeric_limits<uint32_t>::max()));
             frame.transport_age_us = frame.backend_age_us;
-            frame.target_seq_applied = this->arm_state_seq_;
+            frame.target_seq_applied = latest_arm_target_seq;
             for (int i = 0; i < this->arm_joint_count && i < static_cast<int>(rl_sar::protocol::kArmJointCount); ++i)
             {
                 const size_t idx = static_cast<size_t>(i);
@@ -1084,7 +1135,7 @@ rl_sar::runtime::coordinator::Input RL_Real_Go2X5::BuildCoordinatorInput(
                 if (idx < latest_arm_target.size())
                 {
                     frame.q_target[idx] = latest_arm_target[idx];
-                    frame.tracking_error[idx] = this->arm_external_state_q[idx] - latest_arm_target[idx];
+                    frame.tracking_error[idx] = latest_arm_target[idx] - this->arm_external_state_q[idx];
                 }
             }
         }
@@ -1104,27 +1155,26 @@ rl_sar::runtime::coordinator::Input RL_Real_Go2X5::BuildCoordinatorInput(
     {
         std::lock_guard<std::mutex> lock(this->arm_command_mutex);
         if (this->arm_joint_command_latest.size() == static_cast<size_t>(this->arm_joint_count) &&
-            this->arm_joint_count > 0)
+            this->arm_joint_count > 0 &&
+            !rl_sar::protocol::IsCommandExpired(
+                now_monotonic_ns, this->arm_joint_command_expire_ns_))
         {
             input.has_arm_command = true;
             auto& frame = input.arm_command;
             frame.header.msg_type = rl_sar::protocol::FrameType::ArmCommand;
-            frame.header.source_monotonic_ns = now_monotonic_ns;
-            frame.header.publish_monotonic_ns = now_monotonic_ns;
+            frame.header.seq = this->arm_joint_command_seq_;
+            frame.header.source_monotonic_ns =
+                this->arm_joint_command_source_monotonic_ns_ != 0
+                    ? this->arm_joint_command_source_monotonic_ns_
+                    : now_monotonic_ns;
+            frame.header.publish_monotonic_ns =
+                this->arm_joint_command_publish_monotonic_ns_ != 0
+                    ? this->arm_joint_command_publish_monotonic_ns_
+                    : frame.header.source_monotonic_ns;
             frame.header.mode = static_cast<uint16_t>(input.mode);
             frame.header.validity_flags = rl_sar::protocol::kValidityPayloadValid;
             frame.joint_count = static_cast<uint16_t>(this->arm_joint_count);
-            uint64_t expire_ns = now_monotonic_ns + 15'000'000ULL;
-            if (this->deploy_manifest_runtime_ && this->deploy_manifest_runtime_->HasManifest())
-            {
-                const auto snapshot = this->deploy_manifest_runtime_->Snapshot();
-                if (snapshot.arm_command_expire_ms > 0)
-                {
-                    expire_ns = now_monotonic_ns +
-                        static_cast<uint64_t>(snapshot.arm_command_expire_ms) * 1'000'000ULL;
-                }
-            }
-            frame.command_expire_ns = expire_ns;
+            frame.command_expire_ns = this->arm_joint_command_expire_ns_;
             const auto fixed_kp = this->GetFixedKp();
             const auto fixed_kd = this->GetFixedKd();
             for (int i = 0; i < this->arm_joint_count && i < static_cast<int>(rl_sar::protocol::kArmJointCount); ++i)
@@ -1419,6 +1469,19 @@ rl_sar::protocol::BodyCommandFrame RL_Real_Go2X5::BuildHoldBodyCommandFrame(
         }
     }
 
+    if (IsPassiveBodyOutputMode(mode))
+    {
+        for (size_t i = 0; i < rl_sar::protocol::kBodyJointCount; ++i)
+        {
+            frame.q[i] = static_cast<float>(PosStopF);
+            frame.dq[i] = static_cast<float>(VelStopF);
+            frame.kp[i] = 0.0f;
+            frame.kd[i] = 0.0f;
+            frame.tau[i] = 0.0f;
+        }
+        return frame;
+    }
+
     const auto default_dof_pos = this->GetDefaultDofPos();
     const auto fixed_kp = this->GetFixedKp();
     const auto fixed_kd = this->GetFixedKd();
@@ -1649,6 +1712,23 @@ void RL_Real_Go2X5::InitializeArmCommandState()
     config.arm_hold_pose = config_->GetArmHoldPose();
     config.default_dof_pos = GetDefaultDofPos();
     this->ApplyArmCommandStateLocked(Go2X5ArmRuntime::BuildInitialCommandState(config));
+
+    const uint64_t now_ns = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    uint64_t expire_ns = now_ns + 15'000'000ULL;
+    if (this->deploy_manifest_runtime_ && this->deploy_manifest_runtime_->HasManifest())
+    {
+        const auto snapshot = this->deploy_manifest_runtime_->Snapshot();
+        if (snapshot.arm_command_expire_ms > 0)
+        {
+            expire_ns = now_ns + static_cast<uint64_t>(snapshot.arm_command_expire_ms) * 1'000'000ULL;
+        }
+    }
+    this->arm_joint_command_source_monotonic_ns_ = now_ns;
+    this->arm_joint_command_publish_monotonic_ns_ = now_ns;
+    this->arm_joint_command_expire_ns_ = expire_ns;
+    ++this->arm_joint_command_seq_;
 }
 
 void RL_Real_Go2X5::InitializeRealDeploySafetyConfig()
@@ -2201,6 +2281,19 @@ void RL_Real_Go2X5::SetCommand(const RobotCommand<float> *command)
             this->unitree_low_command.motor_cmd()[mapped].kd() = 0.0f;
             this->unitree_low_command.motor_cmd()[mapped].tau() = 0.0f;
         }
+        else if (IsPassiveBodyJointCommand(command_local.motor_command.q[i],
+                                           command_local.motor_command.dq[i],
+                                           command_local.motor_command.kp[i],
+                                           command_local.motor_command.kd[i],
+                                           command_local.motor_command.tau[i]))
+        {
+            this->unitree_low_command.motor_cmd()[mapped].mode() = 0x00;
+            this->unitree_low_command.motor_cmd()[mapped].q() = PosStopF;
+            this->unitree_low_command.motor_cmd()[mapped].dq() = VelStopF;
+            this->unitree_low_command.motor_cmd()[mapped].kp() = 0.0f;
+            this->unitree_low_command.motor_cmd()[mapped].kd() = 0.0f;
+            this->unitree_low_command.motor_cmd()[mapped].tau() = 0.0f;
+        }
         else
         {
             this->unitree_low_command.motor_cmd()[mapped].mode() = 0x01;
@@ -2272,6 +2365,7 @@ void RL_Real_Go2X5::RobotControl()
     if (this->control.current_keyboard == Input::Keyboard::Escape)
     {
         this->operator_estop_requested_.store(true, std::memory_order_relaxed);
+        this->operator_rl_enable_requested_.store(false, std::memory_order_relaxed);
         std::cout << LOGGER::WARNING
                   << "[SupervisorInput] source=keyboard:Escape reason=estop" << std::endl;
         operator_input_triggered = true;
@@ -2279,12 +2373,32 @@ void RL_Real_Go2X5::RobotControl()
     if (this->control.current_keyboard == Input::Keyboard::R ||
         this->control.current_gamepad == Input::Gamepad::RB_Y)
     {
+        this->operator_estop_requested_.store(false, std::memory_order_relaxed);
+        this->operator_rl_enable_requested_.store(false, std::memory_order_relaxed);
         this->operator_fault_reset_requested_.store(true, std::memory_order_relaxed);
         std::cout << LOGGER::INFO
                   << "[SupervisorInput] source="
                   << (this->control.current_keyboard == Input::Keyboard::R ? "keyboard:R" : "gamepad:RB_Y")
                   << " reason=fault_reset" << std::endl;
         operator_input_triggered = true;
+    }
+    if (this->control.current_keyboard == Input::Keyboard::Num1)
+    {
+        this->operator_rl_enable_requested_.store(true, std::memory_order_relaxed);
+        std::cout << LOGGER::INFO
+                  << "[SupervisorInput] source=keyboard:Num1 reason=rl_enable_request"
+                  << std::endl;
+        operator_input_triggered = true;
+    }
+    if (this->control.current_keyboard == Input::Keyboard::Space)
+    {
+        this->control.x = 0.0f;
+        this->control.y = 0.0f;
+        this->control.yaw = 0.0f;
+        this->control.last_keyboard = Input::Keyboard::Space;
+        std::cout << LOGGER::INFO
+                  << "[OperatorInput] source=keyboard:Space reason=body_velocity_zero"
+                  << std::endl;
     }
     if (this->arm_split_control_enabled && this->control.current_keyboard == Input::Keyboard::Num2)
     {
@@ -2296,7 +2410,6 @@ void RL_Real_Go2X5::RobotControl()
     if (operator_input_triggered)
     {
         this->RefreshSupervisorState("operator_input");
-        this->operator_estop_requested_.store(false, std::memory_order_relaxed);
         this->operator_fault_reset_requested_.store(false, std::memory_order_relaxed);
         this->operator_manual_arm_request_.store(false, std::memory_order_relaxed);
     }
@@ -2307,7 +2420,7 @@ void RL_Real_Go2X5::RobotControl()
         this->control.current_keyboard = this->control.last_keyboard;
     }
 
-    if (!this->UseExclusiveRealDeployControl() && this->control.current_keyboard == Input::Keyboard::Num3)
+    if (this->control.current_keyboard == Input::Keyboard::Num3)
     {
         this->HandleKey3ArmDefault();
         this->control.current_keyboard = this->control.last_keyboard;

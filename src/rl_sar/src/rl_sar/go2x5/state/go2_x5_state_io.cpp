@@ -1,5 +1,6 @@
 
 #include "rl_real_go2_x5.hpp"
+#include "library/core/config/deploy_manifest_runtime.hpp"
 #include "rl_sar/adapters/arx_adapter.hpp"
 #include "rl_sar/go2x5/config/go2_x5_config.hpp"
 #include "rl_sar/go2x5/ipc.hpp"
@@ -422,6 +423,22 @@ void RL_Real_Go2X5::ApplyArmHold(const std::vector<float>& target, const char* r
     auto state = this->CaptureArmCommandStateLocked();
     Go2X5ArmRuntime::ApplyHoldTarget(&state, target_local);
     this->ApplyArmCommandStateLocked(state);
+    const uint64_t now_ns = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    uint64_t expire_ns = now_ns + 15'000'000ULL;
+    if (this->deploy_manifest_runtime_ && this->deploy_manifest_runtime_->HasManifest())
+    {
+        const auto snapshot = this->deploy_manifest_runtime_->Snapshot();
+        if (snapshot.arm_command_expire_ms > 0)
+        {
+            expire_ns = now_ns + static_cast<uint64_t>(snapshot.arm_command_expire_ms) * 1'000'000ULL;
+        }
+    }
+    this->arm_joint_command_source_monotonic_ns_ = now_ns;
+    this->arm_joint_command_publish_monotonic_ns_ = now_ns;
+    this->arm_joint_command_expire_ns_ = expire_ns;
+    ++this->arm_joint_command_seq_;
 
     const float smoothing_time = config_->GetArmCommandSmoothingTime();
     std::cout << LOGGER::INFO << reason << " (smooth=" << smoothing_time << "s)" << std::endl;

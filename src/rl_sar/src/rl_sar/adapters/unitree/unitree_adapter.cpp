@@ -31,6 +31,19 @@ constexpr uint8_t kMotorModeDisabled = 0x00;
 // Unitree Go2 has 20 motors total (12 leg + 6 arm + 2 waist)
 constexpr int kUnitreeMotorCount = 20;
 
+bool IsPassiveBodyJointCommand(const float q,
+                               const float dq,
+                               const float kp,
+                               const float kd,
+                               const float tau)
+{
+    return q == static_cast<float>(kPosStopF) &&
+           dq == static_cast<float>(kVelStopF) &&
+           std::fabs(kp) <= 1e-6f &&
+           std::fabs(kd) <= 1e-6f &&
+           std::fabs(tau) <= 1e-6f;
+}
+
 uint32_t Crc32Core(const uint32_t* ptr, uint32_t len)
 {
     uint32_t xbit = 0;
@@ -540,6 +553,21 @@ void UnitreeAdapter::ConvertBodyCommandToLowCmd(const protocol::BodyCommandFrame
             continue;
         }
         auto& motor_cmd = cmd.motor_cmd()[motor_index];
+        if (IsPassiveBodyJointCommand(body_cmd.q[static_cast<size_t>(i)],
+                                      body_cmd.dq[static_cast<size_t>(i)],
+                                      body_cmd.kp[static_cast<size_t>(i)],
+                                      body_cmd.kd[static_cast<size_t>(i)],
+                                      body_cmd.tau[static_cast<size_t>(i)]))
+        {
+            motor_cmd.mode() = kMotorModeDisabled;
+            motor_cmd.q() = kPosStopF;
+            motor_cmd.dq() = kVelStopF;
+            motor_cmd.kp() = 0.0f;
+            motor_cmd.kd() = 0.0f;
+            motor_cmd.tau() = 0.0f;
+            continue;
+        }
+
         const bool has_valid_cmd =
             std::isfinite(body_cmd.q[static_cast<size_t>(i)]) ||
             std::isfinite(body_cmd.tau[static_cast<size_t>(i)]);
