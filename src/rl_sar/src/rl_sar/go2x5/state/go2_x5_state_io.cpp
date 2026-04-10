@@ -363,36 +363,20 @@ void RL_Real_Go2X5::WriteArmCommandFrameToExternal(const rl_sar::protocol::ArmCo
         return;
     }
 
-#if !defined(USE_CMAKE) && defined(USE_ROS)
     if (!this->arm_bridge_cmd_topic.empty())
     {
-#if defined(USE_ROS1) && defined(USE_ROS)
-        if (this->arm_bridge_cmd_publisher)
+        const auto now = std::chrono::steady_clock::now();
+        const bool should_log =
+            this->arm_bridge_ipc_send_warn_stamp.time_since_epoch().count() == 0 ||
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - this->arm_bridge_ipc_send_warn_stamp).count() >= 1000;
+        if (should_log)
         {
-            std_msgs::Float32MultiArray msg;
-            msg.data.reserve(static_cast<size_t>(this->arm_joint_count) * 5);
-            msg.data.insert(msg.data.end(), arm_q.begin(), arm_q.end());
-            msg.data.insert(msg.data.end(), arm_dq.begin(), arm_dq.end());
-            msg.data.insert(msg.data.end(), arm_kp.begin(), arm_kp.end());
-            msg.data.insert(msg.data.end(), arm_kd.begin(), arm_kd.end());
-            msg.data.insert(msg.data.end(), arm_tau.begin(), arm_tau.end());
-            this->arm_bridge_cmd_publisher.publish(msg);
+            this->arm_bridge_ipc_send_warn_stamp = now;
+            std::cout << LOGGER::WARNING
+                      << "Arm bridge command dropped: typed IPC transport is not active."
+                      << std::endl;
         }
-#elif defined(USE_ROS2) && defined(USE_ROS)
-        if (this->arm_bridge_cmd_publisher)
-        {
-            std_msgs::msg::Float32MultiArray msg;
-            msg.data.reserve(static_cast<size_t>(this->arm_joint_count) * 5);
-            msg.data.insert(msg.data.end(), arm_q.begin(), arm_q.end());
-            msg.data.insert(msg.data.end(), arm_dq.begin(), arm_dq.end());
-            msg.data.insert(msg.data.end(), arm_kp.begin(), arm_kp.end());
-            msg.data.insert(msg.data.end(), arm_kd.begin(), arm_kd.end());
-            msg.data.insert(msg.data.end(), arm_tau.begin(), arm_tau.end());
-            this->arm_bridge_cmd_publisher->publish(msg);
-        }
-#endif
     }
-#endif
 }
 
 void RL_Real_Go2X5::ApplyArmHold(const std::vector<float>& target, const char* reason)
