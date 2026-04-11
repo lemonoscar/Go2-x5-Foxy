@@ -966,6 +966,19 @@ class ArxX5BridgeNode(Node):
                 "accept_commands:=true is set on startup."
             )
 
+    def _deactivate_active_command(self) -> None:
+        was_receiving = self.recv_cmd
+        self.recv_cmd = False
+        self.target_q = list(self.last_q)
+        self.last_kp = [0.0] * self.joint_count
+        self.last_kd = [0.0] * self.joint_count
+        self.last_tau = [0.0] * self.joint_count
+        if was_receiving and self.backend is not None:
+            try:
+                self.backend.stop()
+            except Exception as ex:  # pylint: disable=broad-except
+                self.get_logger().warning(f"Failed to stop active arm command path: {ex}")
+
     def _warn_invalid_command(self, message: str) -> None:
         now = time.monotonic()
         if (now - self.last_invalid_cmd_warn_stamp) > 1.0:
@@ -1217,11 +1230,7 @@ class ArxX5BridgeNode(Node):
                 mode = int(typed_frame["header"].get("mode", 0))
                 if not _arm_mode_allows_actuation(mode):
                     now = time.monotonic()
-                    self.recv_cmd = False
-                    self.target_q = list(self.last_q)
-                    self.last_kp = [0.0] * self.joint_count
-                    self.last_kd = [0.0] * self.joint_count
-                    self.last_tau = [0.0] * self.joint_count
+                    self._deactivate_active_command()
                     if (now - self.last_inactive_mode_warn_stamp) > 1.0:
                         self.last_inactive_mode_warn_stamp = now
                         self.get_logger().info(
@@ -1296,7 +1305,9 @@ class ArxX5BridgeNode(Node):
         if stale and (now - self.last_stale_warn_stamp) > 1.0:
             self.last_stale_warn_stamp = now
             if self.recv_cmd:
-                self.get_logger().warning("Arm command timeout, keep last command/state.")
+                self.get_logger().warning("Arm command timeout, deactivate active arm command.")
+        if stale and self.recv_cmd:
+            self._deactivate_active_command()
 
         if self.recv_cmd and not stale and self.backend is not None:
             sent = self.backend.send_joint_command(
@@ -1308,7 +1319,8 @@ class ArxX5BridgeNode(Node):
                 kd=self.last_kd,
             )
             if not sent:
-                self.get_logger().warning("ARX command send failed; keep shadow state.")
+                self.get_logger().warning("ARX command send failed; deactivate active arm command.")
+                self._deactivate_active_command()
 
         state_from_backend = False
         if self.backend is not None:

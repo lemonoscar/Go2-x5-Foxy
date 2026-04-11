@@ -104,9 +104,15 @@ int main()
     RequireContains(utility_content, "bool RL_Real_Go2X5::ShouldExecuteActiveShutdown()", utility_file.string());
 
     const std::string state_io_content = ReadAll(state_io_file.string());
+    RequireContains(state_io_content, "const auto supervisor_mode = this->GetSupervisorModeSnapshot();", state_io_file.string());
+    RequireContains(state_io_content, "const bool allow_passthrough = allow_arm_actuation;", state_io_file.string());
     RequireContains(state_io_content, "const bool allow_arm_actuation =", state_io_file.string());
     RequireContains(state_io_content, "Arm command suppressed in supervisor mode", state_io_file.string());
     RequireContains(state_io_content, "Waiting for ManualArm or RlDogOnlyActive.", state_io_file.string());
+    RequireNotContains(
+        state_io_content,
+        "const bool allow_passthrough = in_rl_locomotion || this->arm_safe_shutdown_active.load();",
+        state_io_file.string());
 
     const std::string ros_content = ReadAll(ros_file.string());
     RequireContains(ros_content, "const bool monitor_tracking_error = this->ShouldActuateArmForMode(supervisor_mode);", ros_file.string());
@@ -121,6 +127,9 @@ int main()
 
     const std::string bridge_content = ReadAll(bridge_file.string());
     RequireContains(bridge_content, "def _arm_mode_allows_actuation(mode: int) -> bool:", bridge_file.string());
+    RequireContains(bridge_content, "def _deactivate_active_command(self) -> None:", bridge_file.string());
+    RequireContains(bridge_content, "was_receiving = self.recv_cmd", bridge_file.string());
+    RequireContains(bridge_content, "self.backend.stop()", bridge_file.string());
     RequireContains(bridge_content, "if not _arm_mode_allows_actuation(mode):", bridge_file.string());
     RequireContains(bridge_content, "self.recv_cmd = False", bridge_file.string());
 

@@ -101,6 +101,29 @@ void RL_Real_Go2X5::WriteArmCommandToExternal(const RobotCommand<float> *command
         return;
     }
 
+    const auto supervisor_mode = this->GetSupervisorModeSnapshot();
+    const bool allow_arm_actuation =
+        this->arm_safe_shutdown_active.load() || this->ShouldActuateArmForMode(supervisor_mode);
+    if (!allow_arm_actuation)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        const bool should_log =
+            this->arm_command_suppressed_warn_stamp.time_since_epoch().count() == 0 ||
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - this->arm_command_suppressed_warn_stamp).count() >= 1000;
+        if (should_log)
+        {
+            this->arm_command_suppressed_warn_stamp = now;
+            std::cout << LOGGER::INFO
+                      << "Arm command suppressed in supervisor mode "
+                      << Go2X5Supervisor::ToString(supervisor_mode)
+                      << ". Waiting for ManualArm or RlDogOnlyActive."
+                      << std::endl;
+        }
+        this->arm_non_rl_guard_warned = false;
+        return;
+    }
+
     std::vector<float> arm_q(static_cast<size_t>(this->arm_joint_count), 0.0f);
     std::vector<float> arm_dq(static_cast<size_t>(this->arm_joint_count), 0.0f);
     std::vector<float> arm_kp(static_cast<size_t>(this->arm_joint_count), 0.0f);
@@ -129,8 +152,7 @@ void RL_Real_Go2X5::WriteArmCommandToExternal(const RobotCommand<float> *command
         arm_hold_enabled_local = this->arm_hold_enabled;
         arm_hold_local = this->arm_hold_position;
     }
-    const bool in_rl_locomotion = this->IsInRLLocomotionState();
-    const bool allow_passthrough = in_rl_locomotion || this->arm_safe_shutdown_active.load();
+    const bool allow_passthrough = allow_arm_actuation;
     if (allow_passthrough)
     {
         this->arm_non_rl_guard_warned = false;

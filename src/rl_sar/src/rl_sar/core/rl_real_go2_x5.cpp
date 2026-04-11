@@ -1574,6 +1574,8 @@ rl_sar::protocol::ArmCommandFrame RL_Real_Go2X5::BuildHoldArmCommandFrame(
 
     const auto fixed_kp = this->GetFixedKp();
     const auto fixed_kd = this->GetFixedKd();
+    const bool allow_arm_actuation =
+        this->arm_safe_shutdown_active.load() || this->ShouldActuateArmForMode(mode);
     for (int i = 0; i < this->arm_joint_count && i < static_cast<int>(rl_sar::protocol::kArmJointCount); ++i)
     {
         const size_t idx = static_cast<size_t>(i);
@@ -1581,11 +1583,11 @@ rl_sar::protocol::ArmCommandFrame RL_Real_Go2X5::BuildHoldArmCommandFrame(
         frame.q[idx] = idx < hold_position.size() ? hold_position[idx] : 0.0f;
         frame.dq[idx] = 0.0f;
         frame.tau[idx] = 0.0f;
-        frame.kp[idx] =
+        frame.kp[idx] = allow_arm_actuation &&
             (joint_idx >= 0 && joint_idx < static_cast<int>(fixed_kp.size()))
                 ? fixed_kp[static_cast<size_t>(joint_idx)]
                 : 0.0f;
-        frame.kd[idx] =
+        frame.kd[idx] = allow_arm_actuation &&
             (joint_idx >= 0 && joint_idx < static_cast<int>(fixed_kd.size()))
                 ? fixed_kd[static_cast<size_t>(joint_idx)]
                 : 0.0f;
