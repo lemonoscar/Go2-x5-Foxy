@@ -176,6 +176,32 @@ ValidationResult ConfigLoader::LoadLayerFromFile(ConfigLayer layer,
     }
 }
 
+ValidationResult ConfigLoader::LoadLayerFromScopedFile(
+    ConfigLayer layer,
+    const std::string& file_path,
+    const std::string& scope_key) {
+    try {
+        YAML::Node node = YAML::LoadFile(file_path);
+        if (!scope_key.empty()) {
+            node = node[scope_key];
+        }
+        if (!node.IsDefined() || node.IsNull()) {
+            return ValidationResult::Error(
+                "Failed to find YAML scope '" + scope_key + "' in file: " + file_path,
+                scope_key);
+        }
+        return LoadLayerFromNode(layer, node);
+    } catch (const YAML::Exception& e) {
+        return ValidationResult::Error(
+            "Failed to load YAML file: " + file_path + " - " + e.what(),
+            file_path);
+    } catch (const std::exception& e) {
+        return ValidationResult::Error(
+            "Failed to load file: " + file_path + " - " + e.what(),
+            file_path);
+    }
+}
+
 ValidationResult ConfigLoader::LoadLayerFromNode(ConfigLayer layer,
                                                 const YAML::Node& node) {
     if (!node.IsDefined() || node.IsNull()) {

@@ -100,6 +100,18 @@ public:
     ValidationResult LoadLayerFromFile(ConfigLayer layer, const std::string& file_path);
 
     /**
+     * @brief Load a configuration layer from a YAML file and scope to a top-level key
+     * @param layer The layer to load
+     * @param file_path Path to the YAML file
+     * @param scope_key Top-level YAML key to unwrap before loading
+     * @return ValidationResult indicating success or failure
+     */
+    ValidationResult LoadLayerFromScopedFile(
+        ConfigLayer layer,
+        const std::string& file_path,
+        const std::string& scope_key);
+
+    /**
      * @brief Load a configuration layer from a YAML node
      * @param layer The layer to load
      * @param node The YAML node containing the configuration

@@ -446,6 +446,86 @@ arm_control_mode: split
         }
     }
 
+    // Test 19: LoadScopedGo2X5BaseFile
+    {
+        test_count++;
+        ConfigLoader loader("go2_x5");
+        std::string yaml_content = R"(
+go2_x5:
+  num_of_dofs: 18
+  dt: 0.005
+  default_dof_pos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  joint_mapping: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+  arm_control_mode: split
+)";
+
+        std::string filename = CreateTempYamlFile(yaml_content);
+        auto result = loader.LoadLayerFromScopedFile(ConfigLayer::BaseYaml, filename, "go2_x5");
+
+        if (result.is_valid &&
+            loader.Get<int>("num_of_dofs", 0) == 18 &&
+            loader.Get<std::vector<int>>("joint_mapping", {}).size() == 18 &&
+            loader.Get<std::string>("arm_control_mode", "") == "split") {
+            passed++;
+            std::cout << "✓ LoadScopedGo2X5BaseFile\n";
+        } else {
+            std::cerr << "✗ LoadScopedGo2X5BaseFile: " << result.error_message << "\n";
+        }
+
+        std::remove(filename.c_str());
+    }
+
+    // Test 20: LoadScopedGo2X5RuntimeFilesAndValidate
+    {
+        test_count++;
+        ConfigLoader loader("go2_x5");
+        std::string base_yaml = R"(
+go2_x5:
+  num_of_dofs: 18
+  default_dof_pos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  joint_mapping: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+  arm_control_mode: split
+)";
+        std::string runtime_yaml = R"(
+go2_x5/robot_lab:
+  model_name: "policy.pt"
+  num_observations: 260
+  observations: ["lin_vel", "ang_vel"]
+  fixed_cmd_x: 0.5
+)";
+
+        std::string base_filename = CreateTempYamlFile(base_yaml);
+        std::string runtime_filename = CreateTempYamlFile(runtime_yaml);
+
+        auto base_result = loader.LoadLayerFromScopedFile(ConfigLayer::BaseYaml, base_filename, "go2_x5");
+        auto runtime_result = loader.LoadLayerFromScopedFile(
+            ConfigLayer::RuntimeYaml, runtime_filename, "go2_x5/robot_lab");
+        loader.Set("dt", YAML::Node(0.005f));
+        loader.Set("arm_command_size", YAML::Node(6));
+        loader.Set("arm_joint_count", YAML::Node(6));
+        loader.Set("arm_joint_start_index", YAML::Node(12));
+
+        const auto schema_result = loader.Validate(ConfigLoader::CreateGo2X5Schema());
+
+        if (base_result.is_valid &&
+            runtime_result.is_valid &&
+            schema_result.is_valid &&
+            loader.Get<int>("num_of_dofs", 0) == 18 &&
+            loader.Get<std::vector<int>>("joint_mapping", {}).size() == 18 &&
+            std::fabs(loader.Get<float>("fixed_cmd_x", 0.0f) - 0.5f) < 1e-6f) {
+            passed++;
+            std::cout << "✓ LoadScopedGo2X5RuntimeFilesAndValidate\n";
+        } else {
+            std::cerr << "✗ LoadScopedGo2X5RuntimeFilesAndValidate: "
+                      << base_result.error_message << " | "
+                      << runtime_result.error_message << " | "
+                      << schema_result.error_message << "\n";
+        }
+
+        std::remove(base_filename.c_str());
+        std::remove(runtime_filename.c_str());
+    }
+
     std::cout << "\n========================\n";
     std::cout << "Test Results: " << passed << "/" << test_count << " passed\n";
 

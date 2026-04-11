@@ -567,7 +567,8 @@ void RL_Real_Go2X5::InitializeConfigLoader()
     // Load base.yaml configuration
     const std::string policy_path = GetPolicyPathForRuntime(this->deploy_manifest_path_);
     const std::string base_yaml_path = policy_path + "go2_x5/base.yaml";
-    auto result = config_loader_->LoadLayerFromFile(RLConfig::ConfigLayer::BaseYaml, base_yaml_path);
+    auto result = config_loader_->LoadLayerFromScopedFile(
+        RLConfig::ConfigLayer::BaseYaml, base_yaml_path, "go2_x5");
     if (!result.is_valid)
     {
         std::cout << LOGGER::WARNING << "Failed to load base.yaml: " << result.error_message << std::endl;
@@ -578,7 +579,8 @@ void RL_Real_Go2X5::InitializeConfigLoader()
     struct stat buffer;
     if (stat(lab_yaml_path.c_str(), &buffer) == 0)
     {
-        result = config_loader_->LoadLayerFromFile(RLConfig::ConfigLayer::RuntimeYaml, lab_yaml_path);
+        result = config_loader_->LoadLayerFromScopedFile(
+            RLConfig::ConfigLayer::RuntimeYaml, lab_yaml_path, "go2_x5/robot_lab");
         if (!result.is_valid)
         {
             std::cout << LOGGER::WARNING << "Failed to load robot_lab/config.yaml: " << result.error_message << std::endl;
@@ -650,6 +652,9 @@ void RL_Real_Go2X5::InitializeConfigLoader()
     {
         std::cout << LOGGER::WARNING << "[Boot] go2_x5 layered config validation failed: "
                   << schema_result.error_message << " @ " << schema_result.error_path << std::endl;
+        throw std::runtime_error(
+            "go2_x5 runtime config invalid: " + schema_result.error_message +
+            (schema_result.error_path.empty() ? std::string() : " @ " + schema_result.error_path));
     }
 
     manifest_valid_ = manifest_result.is_valid && runtime_config_valid_;
