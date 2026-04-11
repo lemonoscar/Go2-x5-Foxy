@@ -58,7 +58,7 @@ void CheckFrozenManifest(const RLConfig::DeployManifest& manifest)
     Require(manifest.coordinator.arm_command_expire_ms == 15, "arm command expire mismatch");
     Require(manifest.supervisor.policy_timeout_ms == 100, "supervisor policy timeout mismatch");
     Require(manifest.supervisor.fault_latched_requires_manual_reset, "fault latch reset requirement mismatch");
-    Require(manifest.ops.ros2_enabled, "ros2 must stay enabled");
+    Require(!manifest.ops.ros2_enabled, "go2 runtime ros2 must stay disabled by default");
     Require(manifest.ops.ros2_mirror_only, "ros2 mirror only must stay enabled");
     Require(manifest.ops.bridge_rmw_implementation == "rmw_cyclonedds_cpp", "bridge RMW mismatch");
     Require(manifest.ops.go2_rmw_implementation == "rmw_fastrtps_cpp", "runtime RMW mismatch");
@@ -74,7 +74,7 @@ void CheckRuntimeSnapshot(const RLConfig::DeployManifestRuntimeSnapshot& snapsho
     Require(snapshot.policy_id == loader.Manifest().meta.policy_id, "runtime snapshot policy id mismatch");
     Require(snapshot.policy_id_hash != 0, "runtime snapshot policy hash should not be zero");
     Require(snapshot.protocol_version == 1, "runtime snapshot protocol version mismatch");
-    Require(snapshot.ros2_enabled, "runtime snapshot ros2_enabled mismatch");
+    Require(!snapshot.ros2_enabled, "runtime snapshot ros2_enabled mismatch");
     Require(snapshot.ros2_mirror_only, "runtime snapshot ros2_mirror_only mismatch");
     Require(snapshot.policy_rate_hz == 50, "runtime snapshot policy rate mismatch");
     Require(snapshot.coordinator_rate_hz == 200, "runtime snapshot coordinator rate mismatch");

@@ -585,6 +585,10 @@ if(USE_CMAKE AND BUILD_TESTING)
     target_link_libraries(test_go2_x5_launch_defaults ${YAML_CPP_LIBRARIES} Threads::Threads)
     add_test(NAME test_go2_x5_launch_defaults COMMAND test_go2_x5_launch_defaults)
 
+    add_executable(test_go2_x5_keyboard_input_contract test/test_go2_x5_keyboard_input_contract.cpp)
+    target_compile_definitions(test_go2_x5_keyboard_input_contract PRIVATE RL_SAR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME test_go2_x5_keyboard_input_contract COMMAND test_go2_x5_keyboard_input_contract)
+
     add_executable(test_go2_x5_arm_lock_defaults
         test/test_go2_x5_arm_lock_defaults.cpp
         src/rl_sar/go2x5/arm/go2_x5_arm_runtime.cpp)

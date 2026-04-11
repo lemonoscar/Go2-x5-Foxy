@@ -514,10 +514,6 @@ ValidationResult DeployManifestLoader::ValidateManifest(const DeployManifest& ma
         return ValidationResult::Error("supervisor.fault_latched_requires_manual_reset must be true", "supervisor.fault_latched_requires_manual_reset");
     }
 
-    if (!manifest.ops.ros2_enabled)
-    {
-        return ValidationResult::Error("ops.ros2_enabled must be true", "ops.ros2_enabled");
-    }
     if (!manifest.ops.ros2_mirror_only)
     {
         return ValidationResult::Error("ops.ros2_mirror_only must be true", "ops.ros2_mirror_only");

@@ -1,3 +1,4 @@
+#include <cerrno>
 #include "rl_sdk.hpp"
 #include "rl_sar/go2x5/control/go2_x5_control_logic.hpp"
 #include "rl_sar/go2x5/control/go2_x5_operator_control.hpp"
@@ -486,46 +487,158 @@ void RL::AttitudeProtect(const std::vector<float> &quaternion, float pitch_thres
 #include <fcntl.h>
 #include <unistd.h>
 
-static int kbhit()
+namespace
 {
-    static bool initialized = false;
-    static termios original_term;
+struct KeyboardInputState
+{
+    bool initialized = false;
+    bool cleanup_registered = false;
+    bool warned_no_tty = false;
+    bool warned_read_error = false;
+    int fd = -1;
+    termios original_term{};
+};
 
-    // Initialize terminal to non-canonical mode on first call
-    if (!initialized)
+KeyboardInputState& GetKeyboardInputState()
+{
+    static KeyboardInputState state;
+    return state;
+}
+
+void RestoreKeyboardInput()
+{
+    auto& state = GetKeyboardInputState();
+    if (state.fd >= 0)
     {
-        tcgetattr(STDIN_FILENO, &original_term);
-
-        termios new_term = original_term;
-        new_term.c_lflag &= ~(ICANON | ECHO);  // Disable canonical mode and echo
-        new_term.c_cc[VMIN] = 0;   // Non-blocking read
-        new_term.c_cc[VTIME] = 0;  // No timeout
-
-        tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
-
-        // Register cleanup function to restore terminal on exit
-        static bool cleanup_registered = false;
-        if (!cleanup_registered)
+        tcsetattr(state.fd, TCSANOW, &state.original_term);
+        if (state.fd != STDIN_FILENO)
         {
-            std::atexit([]() {
-                tcsetattr(STDIN_FILENO, TCSANOW, &original_term);
-            });
-            cleanup_registered = true;
+            close(state.fd);
         }
-
-        initialized = true;
     }
 
-    // Non-blocking read of a single character
-    char c;
-    int result = read(STDIN_FILENO, &c, 1);
-
-    return (result == 1) ? (unsigned char)c : -1;
+    state.fd = -1;
+    state.initialized = false;
 }
+
+bool ConfigureKeyboardFd(const int fd, termios* original_term)
+{
+    if (fd < 0 || !original_term)
+    {
+        return false;
+    }
+
+    if (tcgetattr(fd, original_term) != 0)
+    {
+        return false;
+    }
+
+    termios new_term = *original_term;
+    new_term.c_lflag &= ~(ICANON | ECHO);
+    new_term.c_cc[VMIN] = 0;
+    new_term.c_cc[VTIME] = 0;
+    if (tcsetattr(fd, TCSANOW, &new_term) != 0)
+    {
+        return false;
+    }
+
+    const int flags = fcntl(fd, F_GETFL, 0);
+    if (flags != -1)
+    {
+        static_cast<void>(fcntl(fd, F_SETFL, flags | O_NONBLOCK));
+    }
+
+    return true;
+}
+
+int AcquireKeyboardFd()
+{
+    auto& state = GetKeyboardInputState();
+    if (state.initialized)
+    {
+        return state.fd;
+    }
+
+    if (isatty(STDIN_FILENO) && ConfigureKeyboardFd(STDIN_FILENO, &state.original_term))
+    {
+        state.fd = STDIN_FILENO;
+    }
+    else
+    {
+        const int tty_fd = open("/dev/tty", O_RDONLY | O_NONBLOCK);
+        if (tty_fd >= 0 && isatty(tty_fd) && ConfigureKeyboardFd(tty_fd, &state.original_term))
+        {
+            state.fd = tty_fd;
+            std::cout << LOGGER::INFO
+                      << "Keyboard input attached to /dev/tty fallback for ros2 launch."
+                      << std::endl;
+        }
+        else
+        {
+            if (tty_fd >= 0)
+            {
+                close(tty_fd);
+            }
+            if (!state.warned_no_tty)
+            {
+                std::cout << LOGGER::WARNING
+                          << "Keyboard input unavailable: neither STDIN nor /dev/tty is interactive."
+                          << std::endl;
+                state.warned_no_tty = true;
+            }
+            state.initialized = true;
+            state.fd = -1;
+            return -1;
+        }
+    }
+
+    if (!state.cleanup_registered)
+    {
+        std::atexit(RestoreKeyboardInput);
+        state.cleanup_registered = true;
+    }
+
+    state.initialized = true;
+    return state.fd;
+}
+
+int ReadKeyboardByte(const int fd)
+{
+    if (fd < 0)
+    {
+        return -1;
+    }
+
+    char c;
+    const int result = read(fd, &c, 1);
+    if (result == 1)
+    {
+        return static_cast<unsigned char>(c);
+    }
+
+    auto& state = GetKeyboardInputState();
+    if (result < 0 &&
+        errno != EAGAIN &&
+        errno != EWOULDBLOCK &&
+        errno != EINTR &&
+        !state.warned_read_error)
+    {
+        std::cout << LOGGER::WARNING
+                  << "Keyboard input read failed, errno=" << errno
+                  << ". Controls may require a direct interactive TTY."
+                  << std::endl;
+        state.warned_read_error = true;
+    }
+
+    return -1;
+}
+
+} // namespace
 
 void RL::KeyboardInterface()
 {
-    int c = kbhit();
+    const int keyboard_fd = AcquireKeyboardFd();
+    int c = ReadKeyboardByte(keyboard_fd);
     if (c > 0)
     {
         switch (c)
@@ -570,28 +683,18 @@ void RL::KeyboardInterface()
         case '\n': case '\r': this->control.SetKeyboard(Input::Keyboard::Enter); break;
         case 27:  // Escape sequence (for arrow keys on Unix/Linux/macOS)
         {
-            char seq[2];
             // Try to read escape sequence non-blockingly
-            if (read(STDIN_FILENO, &seq[0], 1) == 1)
+            const int seq0 = ReadKeyboardByte(keyboard_fd);
+            if (seq0 == '[')
             {
-                if (seq[0] == '[')
+                const int seq1 = ReadKeyboardByte(keyboard_fd);
+                switch (seq1)
                 {
-                    if (read(STDIN_FILENO, &seq[1], 1) == 1)
-                    {
-                        switch (seq[1])
-                        {
-                        case 'A': this->control.SetKeyboard(Input::Keyboard::Up); break;
-                        case 'B': this->control.SetKeyboard(Input::Keyboard::Down); break;
-                        case 'C': this->control.SetKeyboard(Input::Keyboard::Right); break;
-                        case 'D': this->control.SetKeyboard(Input::Keyboard::Left); break;
-                        default: break;
-                        }
-                    }
-                }
-                else
-                {
-                    // Plain escape key
-                    this->control.SetKeyboard(Input::Keyboard::Escape);
+                case 'A': this->control.SetKeyboard(Input::Keyboard::Up); break;
+                case 'B': this->control.SetKeyboard(Input::Keyboard::Down); break;
+                case 'C': this->control.SetKeyboard(Input::Keyboard::Right); break;
+                case 'D': this->control.SetKeyboard(Input::Keyboard::Left); break;
+                default: this->control.SetKeyboard(Input::Keyboard::Escape); break;
                 }
             }
             else

@@ -444,6 +444,7 @@ RL_Real_Go2X5::RL_Real_Go2X5(int argc, char **argv)
 
     this->InitializeRuntimeIntegrations();
     this->RefreshSupervisorState("boot");
+    std::cout << LOGGER::INFO << "[Boot] Supervisor refresh complete" << std::endl;
 
     std::cout << LOGGER::INFO << "Real deploy target: go2_x5" << std::endl;
     std::cout << LOGGER::INFO << "arm_joint_command_topic: " << this->arm_joint_command_topic
@@ -1599,33 +1600,40 @@ void RL_Real_Go2X5::RefreshSupervisorState(const char* source)
         return;
     }
 
-    std::lock_guard<std::mutex> supervisor_lock(this->supervisor_mutex);
+    Go2X5Supervisor::WatchdogInput input;
+    Go2X5Supervisor::TransitionResult result;
+    Go2X5Supervisor::Config supervisor_config;
 
     {
-        std::lock_guard<std::mutex> lock(this->unitree_state_mutex);
-        if (this->body_state_seq_pending_)
-        {
-            ++this->body_state_seq_;
-            this->body_state_seq_pending_ = false;
-        }
-    }
-    {
-        std::lock_guard<std::mutex> lock(this->arm_external_state_mutex);
-        if (this->arm_state_seq_pending_)
-        {
-            ++this->arm_state_seq_;
-            this->arm_state_seq_pending_ = false;
-        }
-    }
+        std::lock_guard<std::mutex> supervisor_lock(this->supervisor_mutex);
 
-    const auto input = this->BuildSupervisorInput();
-    const auto result = this->supervisor_->Step(input);
+        {
+            std::lock_guard<std::mutex> lock(this->unitree_state_mutex);
+            if (this->body_state_seq_pending_)
+            {
+                ++this->body_state_seq_;
+                this->body_state_seq_pending_ = false;
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(this->arm_external_state_mutex);
+            if (this->arm_state_seq_pending_)
+            {
+                ++this->arm_state_seq_;
+                this->arm_state_seq_pending_ = false;
+            }
+        }
+
+        input = this->BuildSupervisorInput();
+        result = this->supervisor_->Step(input);
+        supervisor_config = this->supervisor_->config();
+    }
 
     if (this->state_manager_)
     {
         this->state_manager_->SetArmBridgeConnected(
             input.arm_backend_valid &&
-            input.arm_state_age_us <= this->supervisor_->config().arm_state_stale_us);
+            input.arm_state_age_us <= supervisor_config.arm_state_stale_us);
     }
 
     if (result.mode_changed)
