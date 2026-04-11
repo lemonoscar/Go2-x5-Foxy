@@ -3,6 +3,7 @@
 #include "rl_sar/go2x5/config/go2_x5_config.hpp"
 #include "rl_sar/go2x5/control_logic.hpp"
 #include "rl_sar/go2x5/ipc.hpp"
+#include <cmath>
 #include <chrono>
 #include <iomanip>
 
@@ -18,6 +19,89 @@ bool RL_Real_Go2X5::UseExclusiveRealDeployControl() const
 bool RL_Real_Go2X5::UseArmBridgeIpc() const
 {
     return Go2X5IPC::IsIpcTransport(this->arm_bridge_transport);
+}
+
+Go2X5Supervisor::Mode RL_Real_Go2X5::GetSupervisorModeSnapshot() const
+{
+    std::lock_guard<std::mutex> lock(this->supervisor_mutex);
+    if (this->supervisor_)
+    {
+        return this->supervisor_->mode();
+    }
+    return Go2X5Supervisor::Mode::Boot;
+}
+
+bool RL_Real_Go2X5::ShouldActuateArmForMode(const Go2X5Supervisor::Mode mode) const
+{
+    switch (mode)
+    {
+    case Go2X5Supervisor::Mode::RlDogOnlyActive:
+    case Go2X5Supervisor::Mode::ManualArm:
+        return true;
+    case Go2X5Supervisor::Mode::Boot:
+    case Go2X5Supervisor::Mode::Probe:
+    case Go2X5Supervisor::Mode::Passive:
+    case Go2X5Supervisor::Mode::Ready:
+    case Go2X5Supervisor::Mode::DegradedArm:
+    case Go2X5Supervisor::Mode::DegradedBody:
+    case Go2X5Supervisor::Mode::SoftStop:
+    case Go2X5Supervisor::Mode::FaultLatched:
+        return false;
+    }
+    return false;
+}
+
+bool RL_Real_Go2X5::ShouldExecuteActiveShutdown() const
+{
+    const auto mode = this->GetSupervisorModeSnapshot();
+    switch (mode)
+    {
+    case Go2X5Supervisor::Mode::RlDogOnlyActive:
+    case Go2X5Supervisor::Mode::ManualArm:
+    case Go2X5Supervisor::Mode::DegradedArm:
+    case Go2X5Supervisor::Mode::DegradedBody:
+        return true;
+    case Go2X5Supervisor::Mode::Boot:
+    case Go2X5Supervisor::Mode::Probe:
+    case Go2X5Supervisor::Mode::Passive:
+    case Go2X5Supervisor::Mode::Ready:
+    case Go2X5Supervisor::Mode::SoftStop:
+    case Go2X5Supervisor::Mode::FaultLatched:
+        break;
+    }
+
+    const int num_dofs = this->GetNumDofs();
+    if (num_dofs <= 0 ||
+        this->robot_command.motor_command.q.size() < static_cast<size_t>(num_dofs) ||
+        this->robot_command.motor_command.dq.size() < static_cast<size_t>(num_dofs) ||
+        this->robot_command.motor_command.kp.size() < static_cast<size_t>(num_dofs) ||
+        this->robot_command.motor_command.kd.size() < static_cast<size_t>(num_dofs) ||
+        this->robot_command.motor_command.tau.size() < static_cast<size_t>(num_dofs))
+    {
+        return false;
+    }
+
+    for (int i = 0; i < num_dofs; ++i)
+    {
+        if (this->IsArmJointIndex(i))
+        {
+            continue;
+        }
+
+        const size_t idx = static_cast<size_t>(i);
+        const bool passive_joint =
+            this->robot_command.motor_command.q[idx] == static_cast<float>(PosStopF) &&
+            this->robot_command.motor_command.dq[idx] == static_cast<float>(VelStopF) &&
+            std::fabs(this->robot_command.motor_command.kp[idx]) <= 1e-6f &&
+            std::fabs(this->robot_command.motor_command.kd[idx]) <= 1e-6f &&
+            std::fabs(this->robot_command.motor_command.tau[idx]) <= 1e-6f;
+        if (!passive_joint)
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool RL_Real_Go2X5::IsArmJointIndex(int idx) const

@@ -2015,6 +2015,11 @@ bool RL_Real_Go2X5::ClipWholeBodyCommand(RobotCommand<float> *command, const cha
         const float old_kp = command->motor_command.kp[static_cast<size_t>(i)];
         const float old_kd = command->motor_command.kd[static_cast<size_t>(i)];
 
+        if (IsPassiveBodyJointCommand(old_q, old_dq, old_kp, old_kd, old_tau))
+        {
+            continue;
+        }
+
         command->motor_command.q[static_cast<size_t>(i)] = clip_position(old_q);
         command->motor_command.dq[static_cast<size_t>(i)] = clip_abs(old_dq, dq_fallback, dq_limit, false);
         command->motor_command.tau[static_cast<size_t>(i)] = clip_abs(old_tau, 0.0f, tau_limit, false);
@@ -2227,15 +2232,63 @@ void RL_Real_Go2X5::SetCommand(const RobotCommand<float> *command)
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count());
     Go2X5Supervisor::Mode supervisor_mode = Go2X5Supervisor::Mode::Boot;
+    auto build_body_command_from_robot_command =
+        [&](const Go2X5Supervisor::Mode mode) -> rl_sar::protocol::BodyCommandFrame
+    {
+        rl_sar::protocol::BodyCommandFrame command_frame;
+        command_frame.header.msg_type = rl_sar::protocol::FrameType::BodyCommand;
+        command_frame.header.source_monotonic_ns = now_monotonic_ns;
+        command_frame.header.publish_monotonic_ns = now_monotonic_ns;
+        command_frame.header.mode = static_cast<uint16_t>(mode);
+        command_frame.header.validity_flags = rl_sar::protocol::kValidityPayloadValid;
+        command_frame.joint_count = rl_sar::protocol::kBodyJointCount;
+        command_frame.command_expire_ns = now_monotonic_ns + 15'000'000ULL;
+        if (this->deploy_manifest_runtime_ && this->deploy_manifest_runtime_->HasManifest())
+        {
+            const auto snapshot = this->deploy_manifest_runtime_->Snapshot();
+            if (snapshot.body_command_expire_ms > 0)
+            {
+                command_frame.command_expire_ns = now_monotonic_ns +
+                    static_cast<uint64_t>(snapshot.body_command_expire_ms) * 1'000'000ULL;
+            }
+        }
+
+        const int num_dofs = this->GetNumDofs();
+        size_t body_idx = 0;
+        for (int joint_idx = 0;
+             joint_idx < num_dofs && body_idx < rl_sar::protocol::kBodyJointCount;
+             ++joint_idx)
+        {
+            if (this->IsArmJointIndex(joint_idx))
+            {
+                continue;
+            }
+
+            const size_t joint_slot = static_cast<size_t>(joint_idx);
+            command_frame.q[body_idx] = command_local.motor_command.q[joint_slot];
+            command_frame.dq[body_idx] = command_local.motor_command.dq[joint_slot];
+            command_frame.kp[body_idx] = command_local.motor_command.kp[joint_slot];
+            command_frame.kd[body_idx] = command_local.motor_command.kd[joint_slot];
+            command_frame.tau[body_idx] = command_local.motor_command.tau[joint_slot];
+            ++body_idx;
+        }
+
+        if (body_idx != rl_sar::protocol::kBodyJointCount)
+        {
+            return this->BuildHoldBodyCommandFrame(now_monotonic_ns, mode);
+        }
+
+        return command_frame;
+    };
     rl_sar::protocol::BodyCommandFrame final_body_command =
-        this->BuildHoldBodyCommandFrame(now_monotonic_ns, supervisor_mode);
+        build_body_command_from_robot_command(supervisor_mode);
     rl_sar::protocol::ArmCommandFrame final_arm_command =
         this->BuildHoldArmCommandFrame(now_monotonic_ns, supervisor_mode);
     if (this->coordinator_)
     {
         const auto coordinator_input = this->BuildCoordinatorInput(now_monotonic_ns);
         supervisor_mode = coordinator_input.mode;
-        final_body_command = this->BuildHoldBodyCommandFrame(now_monotonic_ns, supervisor_mode);
+        final_body_command = build_body_command_from_robot_command(supervisor_mode);
         final_arm_command = this->BuildHoldArmCommandFrame(now_monotonic_ns, supervisor_mode);
         const auto coordinator_output = this->coordinator_->Step(coordinator_input);
         {

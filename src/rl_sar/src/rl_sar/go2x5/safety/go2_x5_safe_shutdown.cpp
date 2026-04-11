@@ -1,5 +1,6 @@
 
 #include "rl_sar/core/rl_real_go2_x5.hpp"
+#include "rl_sar/adapters/unitree_adapter.hpp"
 #include "rl_sar/go2x5/config/go2_x5_config.hpp"
 #include "loop.hpp"
 #include <chrono>
@@ -92,6 +93,17 @@ void RL_Real_Go2X5::PublishWholeBodyPose(const std::vector<float>& pose,
         const int mapped = joint_mapping[static_cast<size_t>(i)];
         if (mapped < 0 || mapped >= 20) continue;
 
+        if (this->arm_split_control_enabled && this->IsArmJointIndex(i))
+        {
+            this->unitree_low_command.motor_cmd()[mapped].mode() = 0x00;
+            this->unitree_low_command.motor_cmd()[mapped].q() = PosStopF;
+            this->unitree_low_command.motor_cmd()[mapped].dq() = VelStopF;
+            this->unitree_low_command.motor_cmd()[mapped].kp() = 0.0f;
+            this->unitree_low_command.motor_cmd()[mapped].kd() = 0.0f;
+            this->unitree_low_command.motor_cmd()[mapped].tau() = 0.0f;
+            continue;
+        }
+
         this->unitree_low_command.motor_cmd()[mapped].mode() = 0x01;
         this->unitree_low_command.motor_cmd()[mapped].q() = command_local.motor_command.q[static_cast<size_t>(i)];
         this->unitree_low_command.motor_cmd()[mapped].dq() = command_local.motor_command.dq[static_cast<size_t>(i)];
@@ -99,17 +111,36 @@ void RL_Real_Go2X5::PublishWholeBodyPose(const std::vector<float>& pose,
         this->unitree_low_command.motor_cmd()[mapped].kd() = command_local.motor_command.kd[static_cast<size_t>(i)];
         this->unitree_low_command.motor_cmd()[mapped].tau() = command_local.motor_command.tau[static_cast<size_t>(i)];
     }
-    this->unitree_low_command.crc() = this->Crc32Core(
-        (uint32_t *)&this->unitree_low_command,
-        (sizeof(unitree_go::msg::dds_::LowCmd_) >> 2) - 1);
-    this->lowcmd_publisher->Write(this->unitree_low_command);
+    if (this->lowcmd_publisher)
+    {
+        this->unitree_low_command.crc() = this->Crc32Core(
+            (uint32_t *)&this->unitree_low_command,
+            (sizeof(unitree_go::msg::dds_::LowCmd_) >> 2) - 1);
+        this->lowcmd_publisher->Write(this->unitree_low_command);
+    }
 }
 
 void RL_Real_Go2X5::ExecuteSafeShutdownSequence()
 {
     const int num_dofs = GetNumDofs();
-    const auto start_pose = GetDefaultDofPos();
-    auto target_pose = BuildSafeShutdownTargetPose(start_pose);
+    const auto default_pos = GetDefaultDofPos();
+    std::vector<float> start_pose = default_pos;
+    if (start_pose.size() != static_cast<size_t>(num_dofs))
+    {
+        start_pose.assign(static_cast<size_t>(num_dofs), 0.0f);
+    }
+    if (this->robot_state.motor_state.q.size() >= static_cast<size_t>(num_dofs))
+    {
+        for (int i = 0; i < num_dofs; ++i)
+        {
+            const float q = this->robot_state.motor_state.q[static_cast<size_t>(i)];
+            if (std::isfinite(q))
+            {
+                start_pose[static_cast<size_t>(i)] = q;
+            }
+        }
+    }
+    auto target_pose = BuildSafeShutdownTargetPose(default_pos);
 
     if (target_pose.size() != static_cast<size_t>(num_dofs))
     {
@@ -202,7 +233,51 @@ void RL_Real_Go2X5::SafeShutdownNow()
     try
     {
         this->arm_safe_shutdown_active.store(true);
-        this->ExecuteSafeShutdownSequence();
+        if (this->ShouldExecuteActiveShutdown())
+        {
+            this->ExecuteSafeShutdownSequence();
+        }
+        else
+        {
+            std::cout << "[Shutdown] Passive shutdown: body command already inactive, skip soft land."
+                      << std::endl;
+            const uint64_t now_ns = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count());
+            if (this->unitree_adapter_active_ && this->unitree_adapter_)
+            {
+                const auto body_frame =
+                    this->BuildHoldBodyCommandFrame(now_ns, Go2X5Supervisor::Mode::Passive);
+                this->unitree_adapter_->SetCommand(body_frame);
+                this->unitree_adapter_->ProcessCommand();
+            }
+            else
+            {
+                const int num_dofs = GetNumDofs();
+                const auto joint_mapping = GetJointMapping();
+                for (int i = 0; i < num_dofs && i < static_cast<int>(joint_mapping.size()); ++i)
+                {
+                    const int mapped = joint_mapping[static_cast<size_t>(i)];
+                    if (mapped < 0 || mapped >= 20)
+                    {
+                        continue;
+                    }
+                    this->unitree_low_command.motor_cmd()[mapped].mode() = 0x00;
+                    this->unitree_low_command.motor_cmd()[mapped].q() = PosStopF;
+                    this->unitree_low_command.motor_cmd()[mapped].dq() = VelStopF;
+                    this->unitree_low_command.motor_cmd()[mapped].kp() = 0.0f;
+                    this->unitree_low_command.motor_cmd()[mapped].kd() = 0.0f;
+                    this->unitree_low_command.motor_cmd()[mapped].tau() = 0.0f;
+                }
+                if (this->lowcmd_publisher)
+                {
+                    this->unitree_low_command.crc() = this->Crc32Core(
+                        (uint32_t *)&this->unitree_low_command,
+                        (sizeof(unitree_go::msg::dds_::LowCmd_) >> 2) - 1);
+                    this->lowcmd_publisher->Write(this->unitree_low_command);
+                }
+            }
+        }
     }
     catch (const std::exception& e)
     {

@@ -81,6 +81,10 @@ def _load_limit_list(raw_value: Any, fallback: Sequence[float], expected_len: in
     return values
 
 
+def _arm_mode_allows_actuation(mode: int) -> bool:
+    return int(mode) in (4, 5)
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
@@ -859,6 +863,7 @@ class ArxX5BridgeNode(Node):
         self.ignore_cmd_warned = False
         self.last_stale_warn_stamp = 0.0
         self.last_invalid_cmd_warn_stamp = 0.0
+        self.last_inactive_mode_warn_stamp = 0.0
         self.state_from_backend = False
         self._ipc_cmd_socket: Optional[socket.socket] = None
         self._ipc_state_socket: Optional[socket.socket] = None
@@ -1208,6 +1213,20 @@ class ArxX5BridgeNode(Node):
                     continue
                 if typed_frame["command_expire_ns"] and _monotonic_ns() >= typed_frame["command_expire_ns"]:
                     self._warn_invalid_command("Ignore arm bridge IPC typed cmd: command expired.")
+                    continue
+                mode = int(typed_frame["header"].get("mode", 0))
+                if not _arm_mode_allows_actuation(mode):
+                    now = time.monotonic()
+                    self.recv_cmd = False
+                    self.target_q = list(self.last_q)
+                    self.last_kp = [0.0] * self.joint_count
+                    self.last_kd = [0.0] * self.joint_count
+                    self.last_tau = [0.0] * self.joint_count
+                    if (now - self.last_inactive_mode_warn_stamp) > 1.0:
+                        self.last_inactive_mode_warn_stamp = now
+                        self.get_logger().info(
+                            f"Ignore arm bridge IPC typed cmd in inactive supervisor mode {mode}."
+                        )
                     continue
                 self._apply_command(
                     typed_frame["q"],

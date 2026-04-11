@@ -256,6 +256,9 @@ private:
     bool IsInRLLocomotionState() const;
     bool UseExclusiveRealDeployControl() const;
     bool UseArmBridgeIpc() const;
+    Go2X5Supervisor::Mode GetSupervisorModeSnapshot() const;
+    bool ShouldActuateArmForMode(Go2X5Supervisor::Mode mode) const;
+    bool ShouldExecuteActiveShutdown() const;
     std::vector<float> GetDefaultWholeBodyLowerLimits() const;
     std::vector<float> GetDefaultWholeBodyUpperLimits() const;
     std::vector<float> GetDefaultWholeBodyVelocityLimits() const;
@@ -387,6 +390,7 @@ private:
     std::atomic<bool> body_dds_write_ok_runtime_{true};
     mutable std::chrono::steady_clock::time_point whole_body_clip_warn_stamp{};
     std::chrono::steady_clock::time_point arm_bridge_ipc_send_warn_stamp{};
+    std::chrono::steady_clock::time_point arm_command_suppressed_warn_stamp{};
     std::atomic<bool> loop_exception_requested{false};
     std::mutex safe_shutdown_mutex;
     std::mutex loop_exception_mutex;

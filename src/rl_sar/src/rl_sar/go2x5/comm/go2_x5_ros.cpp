@@ -182,7 +182,10 @@ void RL_Real_Go2X5::HandleArmBridgeStateData(
             MonotonicNsToTimePoint(source_monotonic_ns));
         this->ApplyArmBridgeRuntimeStateLocked(bridge_state);
 
-        if (!sample.q.empty() &&
+        const auto supervisor_mode = this->GetSupervisorModeSnapshot();
+        const bool monitor_tracking_error = this->ShouldActuateArmForMode(supervisor_mode);
+        if (monitor_tracking_error &&
+            !sample.q.empty() &&
             target_pose.size() == sample.q.size() &&
             this->arm_tracking_error_limit_ > 0.0)
         {
@@ -213,6 +216,10 @@ void RL_Real_Go2X5::HandleArmBridgeStateData(
             {
                 this->arm_tracking_error_high_stamp = std::chrono::steady_clock::time_point{};
             }
+        }
+        else
+        {
+            this->arm_tracking_error_high_stamp = std::chrono::steady_clock::time_point{};
         }
 
         tracking_error_changed = (tracking_error_high != this->arm_tracking_error_high_runtime_);

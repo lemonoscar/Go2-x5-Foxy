@@ -7,6 +7,9 @@
 namespace go2_x5_fsm
 {
 
+constexpr float kPassivePosStopF = 2.146E+9f;
+constexpr float kPassiveVelStopF = 16000.0f;
+
 class RLFSMStatePassive : public RLFSMState
 {
 public:
@@ -21,11 +24,11 @@ public:
     {
         for (int i = 0; i < rl.params.Get<int>("num_of_dofs"); ++i)
         {
-            // fsm_command->motor_command.q[i] = fsm_state->motor_state.q[i];
-            fsm_command->motor_command.dq[i] = 0;
-            fsm_command->motor_command.kp[i] = 0;
-            fsm_command->motor_command.kd[i] = 8;
-            fsm_command->motor_command.tau[i] = 0;
+            fsm_command->motor_command.q[i] = kPassivePosStopF;
+            fsm_command->motor_command.dq[i] = kPassiveVelStopF;
+            fsm_command->motor_command.kp[i] = 0.0f;
+            fsm_command->motor_command.kd[i] = 0.0f;
+            fsm_command->motor_command.tau[i] = 0.0f;
         }
     }
 

@@ -242,6 +242,28 @@ void RL_Real_Go2X5::WriteArmCommandFrameToExternal(const rl_sar::protocol::ArmCo
         return;
     }
 
+    const auto supervisor_mode = this->GetSupervisorModeSnapshot();
+    const bool allow_arm_actuation =
+        this->arm_safe_shutdown_active.load() || this->ShouldActuateArmForMode(supervisor_mode);
+    if (!allow_arm_actuation)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        const bool should_log =
+            this->arm_command_suppressed_warn_stamp.time_since_epoch().count() == 0 ||
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - this->arm_command_suppressed_warn_stamp).count() >= 1000;
+        if (should_log)
+        {
+            this->arm_command_suppressed_warn_stamp = now;
+            std::cout << LOGGER::INFO
+                      << "Arm command suppressed in supervisor mode "
+                      << Go2X5Supervisor::ToString(supervisor_mode)
+                      << ". Waiting for ManualArm or RlDogOnlyActive."
+                      << std::endl;
+        }
+        return;
+    }
+
     std::vector<float> arm_q(static_cast<size_t>(this->arm_joint_count), 0.0f);
     std::vector<float> arm_dq(static_cast<size_t>(this->arm_joint_count), 0.0f);
     std::vector<float> arm_kp(static_cast<size_t>(this->arm_joint_count), 0.0f);
