@@ -59,6 +59,18 @@ int main()
         content,
         "Keyboard input unavailable: neither STDIN nor /dev/tty is interactive.",
         rl_sdk_file.string());
+    RequireContains(
+        content,
+        "pending_keyboard_input.exchange(Input::Keyboard::None, std::memory_order_acq_rel)",
+        rl_sdk_file.string());
+    RequireContains(
+        content,
+        "this->pending_keyboard_input.store(keyboard_event, std::memory_order_release);",
+        rl_sdk_file.string());
+    RequireContains(
+        content,
+        "[OperatorInput] source=keyboard:Num0 reason=get_up_request",
+        rl_sdk_file.string());
 
     std::cout << "go2_x5 keyboard input contract test passed." << std::endl;
     return 0;

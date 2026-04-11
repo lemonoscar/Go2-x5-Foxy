@@ -5,6 +5,19 @@
 
 void RL::StateController(const RobotState<float>* state, RobotCommand<float>* command)
 {
+    const auto pending_keyboard =
+        this->pending_keyboard_input.exchange(Input::Keyboard::None, std::memory_order_acq_rel);
+    if (pending_keyboard != Input::Keyboard::None)
+    {
+        this->control.SetKeyboard(pending_keyboard);
+        if (pending_keyboard == Input::Keyboard::Num0)
+        {
+            std::cout << LOGGER::INFO
+                      << "[OperatorInput] source=keyboard:Num0 reason=get_up_request"
+                      << std::endl;
+        }
+    }
+
     const auto go2_x5_operator_config =
         Go2X5OperatorControl::BuildConfig(this->params, this->layered_go2_x5_config);
     const bool exclusive_go2_x5_control =
@@ -641,46 +654,47 @@ void RL::KeyboardInterface()
     int c = ReadKeyboardByte(keyboard_fd);
     if (c > 0)
     {
+        Input::Keyboard keyboard_event = Input::Keyboard::None;
         switch (c)
         {
-        case '0': this->control.SetKeyboard(Input::Keyboard::Num0); break;
-        case '1': this->control.SetKeyboard(Input::Keyboard::Num1); break;
-        case '2': this->control.SetKeyboard(Input::Keyboard::Num2); break;
-        case '3': this->control.SetKeyboard(Input::Keyboard::Num3); break;
-        case '4': this->control.SetKeyboard(Input::Keyboard::Num4); break;
-        case '5': this->control.SetKeyboard(Input::Keyboard::Num5); break;
-        case '6': this->control.SetKeyboard(Input::Keyboard::Num6); break;
-        case '7': this->control.SetKeyboard(Input::Keyboard::Num7); break;
-        case '8': this->control.SetKeyboard(Input::Keyboard::Num8); break;
-        case '9': this->control.SetKeyboard(Input::Keyboard::Num9); break;
-        case 'a': case 'A': this->control.SetKeyboard(Input::Keyboard::A); break;
-        case 'b': case 'B': this->control.SetKeyboard(Input::Keyboard::B); break;
-        case 'c': case 'C': this->control.SetKeyboard(Input::Keyboard::C); break;
-        case 'd': case 'D': this->control.SetKeyboard(Input::Keyboard::D); break;
-        case 'e': case 'E': this->control.SetKeyboard(Input::Keyboard::E); break;
-        case 'f': case 'F': this->control.SetKeyboard(Input::Keyboard::F); break;
-        case 'g': case 'G': this->control.SetKeyboard(Input::Keyboard::G); break;
-        case 'h': case 'H': this->control.SetKeyboard(Input::Keyboard::H); break;
-        case 'i': case 'I': this->control.SetKeyboard(Input::Keyboard::I); break;
-        case 'j': case 'J': this->control.SetKeyboard(Input::Keyboard::J); break;
-        case 'k': case 'K': this->control.SetKeyboard(Input::Keyboard::K); break;
-        case 'l': case 'L': this->control.SetKeyboard(Input::Keyboard::L); break;
-        case 'm': case 'M': this->control.SetKeyboard(Input::Keyboard::M); break;
-        case 'n': case 'N': this->control.SetKeyboard(Input::Keyboard::N); break;
-        case 'o': case 'O': this->control.SetKeyboard(Input::Keyboard::O); break;
-        case 'p': case 'P': this->control.SetKeyboard(Input::Keyboard::P); break;
-        case 'q': case 'Q': this->control.SetKeyboard(Input::Keyboard::Q); break;
-        case 'r': case 'R': this->control.SetKeyboard(Input::Keyboard::R); break;
-        case 's': case 'S': this->control.SetKeyboard(Input::Keyboard::S); break;
-        case 't': case 'T': this->control.SetKeyboard(Input::Keyboard::T); break;
-        case 'u': case 'U': this->control.SetKeyboard(Input::Keyboard::U); break;
-        case 'v': case 'V': this->control.SetKeyboard(Input::Keyboard::V); break;
-        case 'w': case 'W': this->control.SetKeyboard(Input::Keyboard::W); break;
-        case 'x': case 'X': this->control.SetKeyboard(Input::Keyboard::X); break;
-        case 'y': case 'Y': this->control.SetKeyboard(Input::Keyboard::Y); break;
-        case 'z': case 'Z': this->control.SetKeyboard(Input::Keyboard::Z); break;
-        case ' ': this->control.SetKeyboard(Input::Keyboard::Space); break;
-        case '\n': case '\r': this->control.SetKeyboard(Input::Keyboard::Enter); break;
+        case '0': keyboard_event = Input::Keyboard::Num0; break;
+        case '1': keyboard_event = Input::Keyboard::Num1; break;
+        case '2': keyboard_event = Input::Keyboard::Num2; break;
+        case '3': keyboard_event = Input::Keyboard::Num3; break;
+        case '4': keyboard_event = Input::Keyboard::Num4; break;
+        case '5': keyboard_event = Input::Keyboard::Num5; break;
+        case '6': keyboard_event = Input::Keyboard::Num6; break;
+        case '7': keyboard_event = Input::Keyboard::Num7; break;
+        case '8': keyboard_event = Input::Keyboard::Num8; break;
+        case '9': keyboard_event = Input::Keyboard::Num9; break;
+        case 'a': case 'A': keyboard_event = Input::Keyboard::A; break;
+        case 'b': case 'B': keyboard_event = Input::Keyboard::B; break;
+        case 'c': case 'C': keyboard_event = Input::Keyboard::C; break;
+        case 'd': case 'D': keyboard_event = Input::Keyboard::D; break;
+        case 'e': case 'E': keyboard_event = Input::Keyboard::E; break;
+        case 'f': case 'F': keyboard_event = Input::Keyboard::F; break;
+        case 'g': case 'G': keyboard_event = Input::Keyboard::G; break;
+        case 'h': case 'H': keyboard_event = Input::Keyboard::H; break;
+        case 'i': case 'I': keyboard_event = Input::Keyboard::I; break;
+        case 'j': case 'J': keyboard_event = Input::Keyboard::J; break;
+        case 'k': case 'K': keyboard_event = Input::Keyboard::K; break;
+        case 'l': case 'L': keyboard_event = Input::Keyboard::L; break;
+        case 'm': case 'M': keyboard_event = Input::Keyboard::M; break;
+        case 'n': case 'N': keyboard_event = Input::Keyboard::N; break;
+        case 'o': case 'O': keyboard_event = Input::Keyboard::O; break;
+        case 'p': case 'P': keyboard_event = Input::Keyboard::P; break;
+        case 'q': case 'Q': keyboard_event = Input::Keyboard::Q; break;
+        case 'r': case 'R': keyboard_event = Input::Keyboard::R; break;
+        case 's': case 'S': keyboard_event = Input::Keyboard::S; break;
+        case 't': case 'T': keyboard_event = Input::Keyboard::T; break;
+        case 'u': case 'U': keyboard_event = Input::Keyboard::U; break;
+        case 'v': case 'V': keyboard_event = Input::Keyboard::V; break;
+        case 'w': case 'W': keyboard_event = Input::Keyboard::W; break;
+        case 'x': case 'X': keyboard_event = Input::Keyboard::X; break;
+        case 'y': case 'Y': keyboard_event = Input::Keyboard::Y; break;
+        case 'z': case 'Z': keyboard_event = Input::Keyboard::Z; break;
+        case ' ': keyboard_event = Input::Keyboard::Space; break;
+        case '\n': case '\r': keyboard_event = Input::Keyboard::Enter; break;
         case 27:  // Escape sequence (for arrow keys on Unix/Linux/macOS)
         {
             // Try to read escape sequence non-blockingly
@@ -690,20 +704,25 @@ void RL::KeyboardInterface()
                 const int seq1 = ReadKeyboardByte(keyboard_fd);
                 switch (seq1)
                 {
-                case 'A': this->control.SetKeyboard(Input::Keyboard::Up); break;
-                case 'B': this->control.SetKeyboard(Input::Keyboard::Down); break;
-                case 'C': this->control.SetKeyboard(Input::Keyboard::Right); break;
-                case 'D': this->control.SetKeyboard(Input::Keyboard::Left); break;
-                default: this->control.SetKeyboard(Input::Keyboard::Escape); break;
+                case 'A': keyboard_event = Input::Keyboard::Up; break;
+                case 'B': keyboard_event = Input::Keyboard::Down; break;
+                case 'C': keyboard_event = Input::Keyboard::Right; break;
+                case 'D': keyboard_event = Input::Keyboard::Left; break;
+                default: keyboard_event = Input::Keyboard::Escape; break;
                 }
             }
             else
             {
                 // Plain escape key
-                this->control.SetKeyboard(Input::Keyboard::Escape);
+                keyboard_event = Input::Keyboard::Escape;
             }
         } break;
         default:  break;
+        }
+
+        if (keyboard_event != Input::Keyboard::None)
+        {
+            this->pending_keyboard_input.store(keyboard_event, std::memory_order_release);
         }
     }
 }

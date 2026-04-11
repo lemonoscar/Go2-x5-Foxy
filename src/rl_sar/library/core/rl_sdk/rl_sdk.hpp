@@ -11,6 +11,7 @@
 #include <memory>
 #include <fstream>
 #include <mutex>
+#include <atomic>
 
 #include <yaml-cpp/yaml.h>
 #include "fsm.hpp"
@@ -238,6 +239,7 @@ public:
     // control
     Control control;
     void KeyboardInterface();
+    std::atomic<Input::Keyboard> pending_keyboard_input{Input::Keyboard::None};
 
     // history buffer
     ObservationBuffer history_obs_buf;
