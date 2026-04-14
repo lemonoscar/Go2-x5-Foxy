@@ -44,7 +44,7 @@ public:
     {
         None = 0,
         InProcessSdk = 1,
-        Bridge = 2,
+        // Bridge backend removed - only InProcessSdk is supported
     };
 
     /**
@@ -52,11 +52,8 @@ public:
      */
     struct Config
     {
-        /// Preferred backend at startup
-        BackendType preferred_backend = BackendType::InProcessSdk;
-
-        /// Allow fallback to the external bridge transport when SDK backend is unavailable
-        bool allow_fallback_to_bridge = true;
+        // Bridge backend removed - only InProcessSdk is supported
+        // ARX SDK must be available for the adapter to function
 
         /// CAN interface name (e.g., "can0")
         std::string can_interface = "can0";
@@ -99,15 +96,6 @@ public:
 
         /// Initialize to home position
         bool init_to_home = false;
-
-        /// External bridge host (typed IPC / UDP)
-        std::string bridge_host = "127.0.0.1";
-
-        /// External bridge command port
-        int bridge_command_port = 45671;
-
-        /// External bridge state port
-        int bridge_state_port = 45672;
     };
 
     /**

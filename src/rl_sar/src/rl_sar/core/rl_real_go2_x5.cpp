@@ -1014,11 +1014,7 @@ void RL_Real_Go2X5::InitializeAdapters()
     {
         this->arx_adapter_ = std::make_unique<rl_sar::adapters::ArxAdapter>();
         rl_sar::adapters::ArxAdapter::Config arm_config;
-        arm_config.preferred_backend =
-            ToLowerCopy(this->arm_control_mode) == "bridge"
-                ? rl_sar::adapters::ArxAdapter::BackendType::Bridge
-                : rl_sar::adapters::ArxAdapter::BackendType::InProcessSdk;
-        arm_config.allow_fallback_to_bridge = true;
+        // Bridge backend removed - only InProcessSdk is supported
         arm_config.can_interface = manifest.arm_adapter.can_interface;
         arm_config.target_rate_hz = manifest.arm_adapter.arm_target_rate_hz;
         arm_config.servo_rate_hz = manifest.arm_adapter.servo_rate_hz;
@@ -1027,9 +1023,6 @@ void RL_Real_Go2X5::InitializeAdapters()
         arm_config.require_live_state = manifest.arm_adapter.require_live_state;
         arm_config.arm_state_timeout_ms = static_cast<double>(manifest.arm_adapter.arm_state_timeout_ms);
         arm_config.arm_tracking_error_limit = manifest.arm_adapter.arm_tracking_error_limit;
-        arm_config.bridge_host = this->arm_bridge_ipc_host;
-        arm_config.bridge_command_port = this->arm_bridge_cmd_port;
-        arm_config.bridge_state_port = this->arm_bridge_state_port;
         if (const char* sdk_root = std::getenv("ARX5_SDK_ROOT"))
         {
             arm_config.sdk_root = sdk_root;
@@ -1047,15 +1040,12 @@ void RL_Real_Go2X5::InitializeAdapters()
                       << "[Boot] ArxAdapter active: can=" << arm_config.can_interface
                       << ", backend=" << stats.backend_name
                       << ", servo_rate_hz=" << arm_config.servo_rate_hz
-                      << ", bridge_host=" << arm_config.bridge_host
-                      << ", bridge_cmd_port=" << arm_config.bridge_command_port
-                      << ", bridge_state_port=" << arm_config.bridge_state_port
                       << std::endl;
         }
         else
         {
             std::cout << LOGGER::WARNING
-                      << "[Boot] ArxAdapter init failed. Falling back to legacy external bridge path."
+                      << "[Boot] ArxAdapter init failed. ARX SDK must be available."
                       << std::endl;
         }
     }

@@ -7,7 +7,9 @@
  */
 
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -23,13 +25,24 @@
 #include <dlfcn.h>
 #endif
 
+#include <yaml-cpp/yaml.h>
+
 namespace Test
 {
+
+namespace fs = std::filesystem;
+
+enum class CheckMode
+{
+    Offline,
+    Hardware,
+};
 
 struct TestResult
 {
     std::string name;
     bool passed = false;
+    bool skipped = false;
     std::string message;
     double duration_ms = 0.0;
 };
@@ -53,8 +66,8 @@ private:
 
 void PrintResult(const TestResult& result)
 {
-    const char* status = result.passed ? "✓ PASS" : "✗ FAIL";
-    const char* color = result.passed ? "\033[32m" : "\033[31m";
+    const char* status = result.skipped ? "○ SKIP" : (result.passed ? "✓ PASS" : "✗ FAIL");
+    const char* color = result.skipped ? "\033[33m" : (result.passed ? "\033[32m" : "\033[31m");
     std::cout << color << status << "\033[0m "
               << result.name
               << " (" << result.duration_ms << " ms)";
@@ -68,16 +81,79 @@ void PrintResult(const TestResult& result)
 void PrintSummary()
 {
     int passed = 0;
+    int skipped = 0;
     int failed = 0;
     for (const auto& r : results)
     {
-        if (r.passed) passed++;
-        else failed++;
+        if (r.skipped)
+        {
+            skipped++;
+        }
+        else if (r.passed)
+        {
+            passed++;
+        }
+        else
+        {
+            failed++;
+        }
     }
 
     std::cout << "\n========================================" << std::endl;
-    std::cout << "Test Summary: " << passed << " passed, " << failed << " failed" << std::endl;
+    std::cout << "Test Summary: " << passed << " passed, "
+              << skipped << " skipped, "
+              << failed << " failed" << std::endl;
     std::cout << "========================================" << std::endl;
+}
+
+TestResult MakeSkippedResult(const std::string& name, const std::string& message)
+{
+    TestResult result;
+    result.name = name;
+    result.passed = false;
+    result.skipped = true;
+    result.message = message;
+    return result;
+}
+
+std::string ResolveCandidatePath(const std::string& candidate, const std::string& manifest_path)
+{
+    if (candidate.empty())
+    {
+        return {};
+    }
+
+    const fs::path direct(candidate);
+    if (fs::exists(direct))
+    {
+        return direct.lexically_normal().string();
+    }
+
+    std::vector<fs::path> roots;
+    roots.push_back(fs::current_path());
+    if (!manifest_path.empty())
+    {
+        const fs::path manifest_fs(manifest_path);
+        if (manifest_fs.has_parent_path())
+        {
+            roots.push_back(manifest_fs.parent_path());
+            if (manifest_fs.parent_path().has_parent_path())
+            {
+                roots.push_back(manifest_fs.parent_path().parent_path());
+            }
+        }
+    }
+
+    for (const auto& root : roots)
+    {
+        const fs::path resolved = root / candidate;
+        if (fs::exists(resolved))
+        {
+            return resolved.lexically_normal().string();
+        }
+    }
+
+    return {};
 }
 
 // ============================================================================
@@ -89,6 +165,13 @@ TestResult TestCanInterface(const std::string& interface_name)
     TestResult result;
     result.name = "CAN Interface: " + interface_name;
     Timer timer;
+
+    if (interface_name.empty())
+    {
+        result = MakeSkippedResult("CAN Interface", "Skipped (offline mode or empty interface)");
+        result.duration_ms = timer.ElapsedMs();
+        return result;
+    }
 
 #if defined(__linux__)
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -132,6 +215,13 @@ TestResult TestNetworkInterface(const std::string& interface_name)
     TestResult result;
     result.name = "Network Interface: " + interface_name;
     Timer timer;
+
+    if (interface_name.empty())
+    {
+        result = MakeSkippedResult("Network Interface", "Skipped (offline mode or empty interface)");
+        result.duration_ms = timer.ElapsedMs();
+        return result;
+    }
 
 #if defined(__linux__)
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -227,17 +317,31 @@ TestResult TestUnitreeSdk(const std::string& sdk_root)
 // Test 4: ARX SDK库加载检测（只加载符号表，不执行）
 // ============================================================================
 
-TestResult TestArxSdkLibrary(const std::string& sdk_root)
+TestResult TestArxSdkLibrary(const std::string& sdk_root, const std::string& sdk_lib_path)
 {
     TestResult result;
     result.name = "ARX SDK Library";
     Timer timer;
 
 #if defined(__linux__)
-    std::vector<std::string> lib_paths = {
-        sdk_root + "/lib/aarch64/libhardware.so",
-        sdk_root + "/lib/libhardware.so",
-    };
+    std::vector<std::string> lib_paths;
+    if (!sdk_lib_path.empty())
+    {
+        const fs::path lib_path(sdk_lib_path);
+        if (fs::is_directory(lib_path))
+        {
+            lib_paths.push_back((lib_path / "libhardware.so").string());
+        }
+        else
+        {
+            lib_paths.push_back(lib_path.string());
+        }
+    }
+    if (!sdk_root.empty())
+    {
+        lib_paths.push_back(sdk_root + "/lib/aarch64/libhardware.so");
+        lib_paths.push_back(sdk_root + "/lib/libhardware.so");
+    }
 
     std::string found_path;
     for (const auto& path : lib_paths)
@@ -252,7 +356,8 @@ TestResult TestArxSdkLibrary(const std::string& sdk_root)
 
     if (found_path.empty())
     {
-        result.message = "libhardware.so not found (ARX5_SDK_ROOT=" + sdk_root + ")";
+        result.message =
+            "libhardware.so not found (ARX5_SDK_ROOT=" + sdk_root + ", ARX5_SDK_LIB_PATH=" + sdk_lib_path + ")";
         result.duration_ms = timer.ElapsedMs();
         return result;
     }
@@ -359,46 +464,55 @@ TestResult TestDeployManifest(const std::string& manifest_path)
     result.name = "Deploy Manifest";
     Timer timer;
 
-    std::ifstream f(manifest_path);
-    if (!f)
+    try
     {
-        result.message = "File not found: " + manifest_path;
-        result.duration_ms = timer.ElapsedMs();
-        return result;
-    }
-
-    // 检查关键配置项
-    std::vector<std::string> required_keys = {
-        "meta.manifest_version",
-        "robot.leg_joint_count",
-        "robot.arm_joint_count",
-        "policy.action_dim",
-        "policy.observation_dim",
-        "coordinator.rate_hz",
-    };
-
-    std::string line;
-    int found_keys = 0;
-    while (std::getline(f, line))
-    {
-        for (const auto& key : required_keys)
+        const YAML::Node manifest = YAML::LoadFile(manifest_path);
+        if (!manifest || !manifest.IsMap())
         {
-            if (line.find(key) != std::string::npos)
-            {
-                found_keys++;
-                break;
-            }
+            result.message = "Manifest must be a YAML mapping";
+            result.duration_ms = timer.ElapsedMs();
+            return result;
+        }
+
+        const auto require_positive_int = [&](const char* section, const char* key) -> bool {
+            const YAML::Node node = manifest[section];
+            return node && node[key] && node[key].IsScalar() && node[key].as<int>() > 0;
+        };
+        const auto require_positive_double = [&](const char* section, const char* key) -> bool {
+            const YAML::Node node = manifest[section];
+            return node && node[key] && node[key].IsScalar() && node[key].as<double>() > 0.0;
+        };
+        const auto require_non_empty = [&](const char* section, const char* key) -> bool {
+            const YAML::Node node = manifest[section];
+            return node && node[key] && node[key].IsScalar() && !node[key].as<std::string>().empty();
+        };
+
+        const bool ok =
+            require_positive_int("meta", "manifest_version") &&
+            require_positive_int("robot", "leg_joint_count") &&
+            require_positive_int("robot", "arm_joint_count") &&
+            require_positive_int("policy", "action_dim") &&
+            require_positive_int("policy", "observation_dim") &&
+            require_positive_int("policy", "policy_rate_hz") &&
+            require_positive_double("coordinator", "rate_hz") &&
+            require_positive_double("supervisor", "probe_window_sec") &&
+            require_non_empty("body_adapter", "network_interface") &&
+            require_non_empty("arm_adapter", "can_interface") &&
+            require_non_empty("policy", "model_path");
+
+        if (ok)
+        {
+            result.passed = true;
+            result.message = "Manifest schema and key runtime fields look valid";
+        }
+        else
+        {
+            result.message = "Missing or invalid required manifest fields";
         }
     }
-
-    if (found_keys >= required_keys.size())
+    catch (const std::exception& ex)
     {
-        result.passed = true;
-        result.message = "Manifest OK, " + std::to_string(found_keys) + " keys verified";
-    }
-    else
-    {
-        result.message = "Missing " + std::to_string(required_keys.size() - found_keys) + " required keys";
+        result.message = std::string("YAML parse failed: ") + ex.what();
     }
 
     result.duration_ms = timer.ElapsedMs();
@@ -406,16 +520,74 @@ TestResult TestDeployManifest(const std::string& manifest_path)
 }
 
 // ============================================================================
-// Test 7: 策略文件检测
+// Test 7: Runtime模型可达性检测
 // ============================================================================
 
-TestResult TestPolicyFile(const std::string& policy_dir)
+TestResult TestRuntimeModel(const std::string& manifest_path)
 {
     TestResult result;
-    result.name = "Policy File";
+    result.name = "Runtime Model";
     Timer timer;
 
-    std::vector<std::string> policy_files = {
+    try
+    {
+        const YAML::Node manifest = YAML::LoadFile(manifest_path);
+        if (!manifest || !manifest["policy"] || !manifest["policy"]["model_path"])
+        {
+            result.message = "Manifest policy.model_path missing";
+            result.duration_ms = timer.ElapsedMs();
+            return result;
+        }
+
+        const std::string model_path = manifest["policy"]["model_path"].as<std::string>();
+        if (model_path.empty())
+        {
+            result.message = "Manifest policy.model_path is empty";
+            result.duration_ms = timer.ElapsedMs();
+            return result;
+        }
+
+        const std::string resolved = ResolveCandidatePath(model_path, manifest_path);
+        if (resolved.empty())
+        {
+            result.message = "Model file not reachable from manifest: " + model_path;
+            result.duration_ms = timer.ElapsedMs();
+            return result;
+        }
+
+        const auto file_size = fs::file_size(fs::path(resolved));
+        result.passed = true;
+        result.message =
+            "Resolved: " + resolved + " (" + std::to_string(static_cast<unsigned long long>(file_size / 1024ULL)) +
+            " KB)";
+    }
+    catch (const std::exception& ex)
+    {
+        result.message = std::string("Runtime model validation failed: ") + ex.what();
+    }
+
+    result.duration_ms = timer.ElapsedMs();
+    return result;
+}
+
+// ============================================================================
+// Test 8: 策略目录检测（兼容旧脚本）
+// ============================================================================
+
+TestResult TestPolicyDirectory(const std::string& policy_dir)
+{
+    TestResult result;
+    result.name = "Policy Directory";
+    Timer timer;
+
+    if (policy_dir.empty())
+    {
+        result = MakeSkippedResult("Policy Directory", "Skipped (empty policy_dir)");
+        result.duration_ms = timer.ElapsedMs();
+        return result;
+    }
+
+    const std::vector<std::string> policy_files = {
         policy_dir + "/policy.pt",
         policy_dir + "/policy.onnx",
     };
@@ -426,11 +598,11 @@ TestResult TestPolicyFile(const std::string& policy_dir)
         if (f.good())
         {
             f.seekg(0, std::ios::end);
-            size_t size = f.tellg();
+            const auto size = static_cast<unsigned long long>(f.tellg());
             f.close();
 
             result.passed = true;
-            result.message = "Found: " + file + " (" + std::to_string(size / 1024) + " KB)";
+            result.message = "Found: " + file + " (" + std::to_string(size / 1024ULL) + " KB)";
             result.duration_ms = timer.ElapsedMs();
             return result;
         }
@@ -463,15 +635,16 @@ int main(int argc, char** argv)
     Test::PrintSafetyNotice();
 
     std::cout << "========================================" << std::endl;
-    std::cout << "  Go2-X5 硬件接口检测 (只检测，不控制)" << std::endl;
-    std::cout << "  运行平台: Jetson (机器人身上)" << std::endl;
+    std::cout << "  Go2-X5 启动前检查 (只检测，不控制)" << std::endl;
     std::cout << "========================================" << std::endl;
     std::cout << std::endl;
 
     // 默认配置
+    Test::CheckMode mode = Test::CheckMode::Offline;
     std::string can_interface = "can0";
     std::string network_interface = "eth0";
     std::string arx_sdk_root = std::getenv("ARX5_SDK_ROOT") ? std::getenv("ARX5_SDK_ROOT") : "";
+    std::string arx_sdk_lib_path = std::getenv("ARX5_SDK_LIB_PATH") ? std::getenv("ARX5_SDK_LIB_PATH") : "";
     std::string unitree_sdk_root = std::getenv("UNITREE_SDK2_ROOT") ? std::getenv("UNITREE_SDK2_ROOT") : "";
     std::string manifest_path = "deploy/go2_x5_real.yaml";
     std::string policy_dir = ".";
@@ -492,6 +665,10 @@ int main(int argc, char** argv)
         {
             arx_sdk_root = argv[++i];
         }
+        else if (arg == "--arx-sdk-lib" && i + 1 < argc)
+        {
+            arx_sdk_lib_path = argv[++i];
+        }
         else if (arg == "--unitree-sdk" && i + 1 < argc)
         {
             unitree_sdk_root = argv[++i];
@@ -504,13 +681,32 @@ int main(int argc, char** argv)
         {
             policy_dir = argv[++i];
         }
+        else if (arg == "--mode" && i + 1 < argc)
+        {
+            const std::string mode_text = argv[++i];
+            if (mode_text == "hardware")
+            {
+                mode = Test::CheckMode::Hardware;
+            }
+            else if (mode_text == "offline")
+            {
+                mode = Test::CheckMode::Offline;
+            }
+            else
+            {
+                std::cerr << "Unknown --mode value: " << mode_text << std::endl;
+                return 2;
+            }
+        }
         else if (arg == "--help")
         {
             std::cout << "用法: " << argv[0] << " [选项]\n"
                       << "\n选项:\n"
+                      << "  --mode <offline|hardware> 启动前检查模式 (默认: offline)\n"
                       << "  --can <接口>        CAN接口名 (默认: can0)\n"
                       << "  --net <接口>        网络接口名 (默认: eth0)\n"
                       << "  --arx-sdk <路径>    ARX SDK路径 (默认: $ARX5_SDK_ROOT)\n"
+                      << "  --arx-sdk-lib <路径> ARX SDK库目录或libhardware.so路径\n"
                       << "  --unitree-sdk <路径> Unitree SDK路径 (默认: $UNITREE_SDK2_ROOT)\n"
                       << "  --manifest <路径>   Deploy manifest路径\n"
                       << "  --policy-dir <路径>  策略文件目录\n"
@@ -521,40 +717,51 @@ int main(int argc, char** argv)
     }
 
     // 运行测试
-    results.push_back(Test::TestCanInterface(can_interface));
-    results.push_back(Test::TestNetworkInterface(network_interface));
+    if (mode == Test::CheckMode::Hardware)
+    {
+        Test::results.push_back(Test::TestCanInterface(can_interface));
+        Test::results.push_back(Test::TestNetworkInterface(network_interface));
+    }
+    else
+    {
+        Test::results.push_back(Test::MakeSkippedResult("CAN Interface", "Skipped in offline mode"));
+        Test::results.push_back(Test::MakeSkippedResult("Network Interface", "Skipped in offline mode"));
+    }
 
     if (!unitree_sdk_root.empty())
     {
-        results.push_back(Test::TestUnitreeSdk(unitree_sdk_root));
+        Test::results.push_back(Test::TestUnitreeSdk(unitree_sdk_root));
     }
     else
     {
-        TestResult r;
+        Test::TestResult r;
         r.name = "Unitree SDK Files";
+        r.skipped = true;
         r.message = "Skipped (UNITREE_SDK2_ROOT not set)";
-        results.push_back(r);
+        Test::results.push_back(r);
     }
 
-    if (!arx_sdk_root.empty())
+    if (!arx_sdk_root.empty() || !arx_sdk_lib_path.empty())
     {
-        results.push_back(Test::TestArxSdkLibrary(arx_sdk_root));
+        Test::results.push_back(Test::TestArxSdkLibrary(arx_sdk_root, arx_sdk_lib_path));
     }
     else
     {
-        TestResult r;
+        Test::TestResult r;
         r.name = "ARX SDK Library";
-        r.message = "Skipped (ARX5_SDK_ROOT not set)";
-        results.push_back(r);
+        r.skipped = true;
+        r.message = "Skipped (ARX5_SDK_ROOT / ARX5_SDK_LIB_PATH not set)";
+        Test::results.push_back(r);
     }
 
-    results.push_back(Test::TestSystemResources());
-    results.push_back(Test::TestDeployManifest(manifest_path));
-    results.push_back(Test::TestPolicyFile(policy_dir));
+    Test::results.push_back(Test::TestSystemResources());
+    Test::results.push_back(Test::TestDeployManifest(manifest_path));
+    Test::results.push_back(Test::TestRuntimeModel(manifest_path));
+    Test::results.push_back(Test::TestPolicyDirectory(policy_dir));
 
     // 打印结果
     std::cout << std::endl;
-    for (const auto& r : results)
+    for (const auto& r : Test::results)
     {
         Test::PrintResult(r);
     }
@@ -565,9 +772,9 @@ int main(int argc, char** argv)
     std::cout << "\n⚠️  测试完成。所有检测均为只读，机器人未受影响。" << std::endl;
 
     int failed = 0;
-    for (const auto& r : results)
+    for (const auto& r : Test::results)
     {
-        if (!r.passed) failed++;
+        if (!r.passed && !r.skipped) failed++;
     }
 
     return (failed == 0) ? 0 : 1;

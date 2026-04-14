@@ -594,14 +594,8 @@ if(USE_CMAKE AND BUILD_TESTING)
         test/test_go2_x5_protocol_serialization.cpp
         src/rl_sar/protocol/go2_x5_protocol.cpp)
     add_test(NAME test_go2_x5_protocol_serialization COMMAND test_go2_x5_protocol_serialization)
-    add_test(
-        NAME test_go2_x5_arx_x5_bridge_py_compile
-        COMMAND ${Python3_EXECUTABLE} -m py_compile ${CMAKE_CURRENT_SOURCE_DIR}/scripts/arx_x5_bridge.py
-    )
 
-    add_executable(test_go2_x5_arm_bridge_defaults test/test_go2_x5_arm_bridge_defaults.cpp)
-    target_compile_definitions(test_go2_x5_arm_bridge_defaults PRIVATE RL_SAR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
-    add_test(NAME test_go2_x5_arm_bridge_defaults COMMAND test_go2_x5_arm_bridge_defaults)
+    # Bridge-related tests removed - InProcessSdk only
 
     add_executable(test_go2_x5_config_split test/test_go2_x5_config_split.cpp)
     target_compile_definitions(test_go2_x5_config_split PRIVATE RL_SAR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -638,8 +632,7 @@ if(USE_CMAKE AND BUILD_TESTING)
     add_executable(test_go2_x5_arm_runtime test/test_go2_x5_arm_runtime.cpp src/rl_sar/go2x5/arm/go2_x5_arm_runtime.cpp)
     add_test(NAME test_go2_x5_arm_runtime COMMAND test_go2_x5_arm_runtime)
 
-    add_executable(test_go2_x5_arm_bridge_runtime test/test_go2_x5_arm_bridge_runtime.cpp src/rl_sar/go2x5/arm/go2_x5_arm_bridge_runtime.cpp src/rl_sar/go2x5/safety/go2_x5_safety_guard.cpp)
-    add_test(NAME test_go2_x5_arm_bridge_runtime COMMAND test_go2_x5_arm_bridge_runtime)
+    # Bridge runtime test removed - InProcessSdk only
 
     add_executable(test_go2_x5_arm_output_guard test/test_go2_x5_arm_output_guard.cpp src/rl_sar/go2x5/arm/go2_x5_arm_output_guard.cpp)
     add_test(NAME test_go2_x5_arm_output_guard COMMAND test_go2_x5_arm_output_guard)
@@ -812,7 +805,8 @@ if(USE_CMAKE AND BUILD_TESTING)
     # Hardware interface detection (read-only, no control)
     add_executable(test_hardware_interfaces
         test/hardware/test_hardware_interfaces.cpp)
-    target_link_libraries(test_hardware_interfaces ${CMAKE_DL_LIBS})
+    target_include_directories(test_hardware_interfaces PRIVATE include)
+    target_link_libraries(test_hardware_interfaces ${YAML_CPP_LIBRARIES} ${CMAKE_DL_LIBS})
 
     # Observation snapshot generator (for training-deployment consistency)
     add_executable(test_observation_snapshot

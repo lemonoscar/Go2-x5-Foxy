@@ -65,40 +65,14 @@ int main()
     RequireContains(launch_content, "OpaqueFunction(function=_build_launch_actions)", launch_file.string());
     RequireContains(launch_content, "\"--manifest-path\"", launch_file.string());
     RequireContains(launch_content, "DeclareLaunchArgument(\"go2_enable_ros2_runtime\"", launch_file.string());
-    RequireContains(launch_content, "DeclareLaunchArgument(\"go2_arm_bridge_transport\"", launch_file.string());
-    RequireContains(launch_content, "bridge_rmw_implementation", launch_file.string());
     RequireContains(launch_content, "go2_rmw_implementation", launch_file.string());
-    RequireContains(launch_content, "\"arm_cmd_topic\": str(arm_adapter.get(\"arm_cmd_topic\", \"/arx_x5/joint_cmd\"))", launch_file.string());
-    RequireContains(launch_content, "\"arm_state_topic\": str(arm_adapter.get(\"arm_state_topic\", \"/arx_x5/joint_state\"))", launch_file.string());
-    RequireContains(launch_content, "\"arm_joint_command_topic\": str(arm_adapter.get(\"arm_joint_command_topic\", \"/arm_joint_pos_cmd\"))", launch_file.string());
-    RequireContains(launch_content, "\"bridge_rmw_implementation\": str(ops.get(\"bridge_rmw_implementation\", \"rmw_cyclonedds_cpp\"))", launch_file.string());
-    RequireContains(launch_content, "\"go2_rmw_implementation\": str(ops.get(\"go2_rmw_implementation\", \"rmw_fastrtps_cpp\"))", launch_file.string());
-    RequireContains(launch_content, "DeclareLaunchArgument(\"arm_cmd_topic\", default_value=arm_cmd_topic_value)", launch_file.string());
-    RequireContains(launch_content, "DeclareLaunchArgument(\"arm_state_topic\", default_value=arm_state_topic_value)", launch_file.string());
-    RequireContains(launch_content, "DeclareLaunchArgument(\"arm_joint_command_topic\", default_value=arm_joint_command_topic_value)", launch_file.string());
-    RequireContains(launch_content, "default_value=bridge_rmw_implementation_value", launch_file.string());
-    RequireContains(launch_content, "default_value=go2_rmw_implementation_value", launch_file.string());
-    RequireContains(launch_content, "\"ipc_bind_host\": go2_arm_bridge_ipc_host", launch_file.string());
-    RequireContains(launch_content, "\"ipc_cmd_port\": go2_arm_bridge_cmd_port", launch_file.string());
-    RequireContains(launch_content, "\"ipc_state_host\": go2_arm_bridge_ipc_host", launch_file.string());
-    RequireContains(launch_content, "\"ipc_state_port\": go2_arm_bridge_state_port", launch_file.string());
-    Require(launch_content.find("DeclareLaunchArgument(\"arm_ipc_bind_host\"") == std::string::npos,
-        "arm_ipc_bind_host should no longer be a separate launch source");
-    Require(launch_content.find("DeclareLaunchArgument(\"arm_ipc_cmd_port\"") == std::string::npos,
-        "arm_ipc_cmd_port should no longer be a separate launch source");
-    Require(launch_content.find("DeclareLaunchArgument(\"arm_ipc_state_host\"") == std::string::npos,
-        "arm_ipc_state_host should no longer be a separate launch source");
-    Require(launch_content.find("DeclareLaunchArgument(\"arm_ipc_state_port\"") == std::string::npos,
-        "arm_ipc_state_port should no longer be a separate launch source");
+    // Bridge-related launch arguments removed - only InProcessSdk is supported
+    RequireContains(launch_content, "go2_x5_node", launch_file.string());
+    Require(launch_content.find("arx_x5_bridge") == std::string::npos,
+        "arx_x5_bridge node should be removed");
     RequireContains(real_content, "this->InitializeRuntimeOptions(argc, argv);", real_file.string());
     RequireContains(real_content, "this->InitializeConfigLoader();", real_file.string());
     RequireContains(real_content, "deploy_manifest_runtime_->LoadFromFile(this->deploy_manifest_path_)", real_file.string());
-    RequireContains(real_content, "this->runtime_ros2_enabled_explicit_ = options.enable_ros2_runtime_explicit;", real_file.string());
-    RequireContains(real_content, "this->runtime_arm_bridge_transport_explicit_ = options.arm_bridge_transport_explicit;", real_file.string());
-    RequireContains(real_content, "if (!this->runtime_ros2_enabled_explicit_)", real_file.string());
-    RequireContains(real_content, "this->enable_ros2_runtime = snapshot.ros2_enabled;", real_file.string());
-    RequireContains(real_content, "if (!this->runtime_arm_bridge_transport_explicit_)", real_file.string());
-    RequireContains(real_content, "this->arm_bridge_transport = snapshot.arm_bridge_transport;", real_file.string());
     Require(real_content.find("this->InitializeRuntimeOptions(argc, argv);") <
                 real_content.find("this->InitializeConfigLoader();"),
         "runtime options must be initialized before config loader");

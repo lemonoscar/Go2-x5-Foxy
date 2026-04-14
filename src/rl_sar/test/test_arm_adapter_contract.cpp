@@ -276,8 +276,6 @@ TEST_F(ArxAdapterContract, InitializesInProcessSdkBackendWithFakeHardwareLibrary
     }
 
     auto config = MakeDefaultConfig();
-    config.preferred_backend = ArxAdapter::BackendType::InProcessSdk;
-    config.allow_fallback_to_bridge = false;
     config.require_live_state = true;
     config.can_interface = "lo";
     config.sdk_lib_path = fake_sdk_lib;
@@ -344,75 +342,7 @@ TEST_F(ArxAdapterContract, ConfigIsPreserved)
     EXPECT_EQ(adapter_->GetConfig().servo_rate_hz, 1000);
 }
 
-TEST_F(ArxAdapterContract, FallsBackToBridgeBackendWhenSdkUnavailable)
-{
-#if !defined(__linux__)
-    GTEST_SKIP() << "Bridge backend contract test requires Linux sockets";
-#else
-    UdpArmBridgeHarness bridge;
-    ASSERT_TRUE(bridge.IsValid());
-
-    auto config = MakeDefaultConfig();
-    config.preferred_backend = ArxAdapter::BackendType::InProcessSdk;
-    config.allow_fallback_to_bridge = true;
-    config.require_live_state = false;
-    config.bridge_host = "127.0.0.1";
-    config.bridge_command_port = bridge.command_port();
-    config.bridge_state_port = bridge.state_port();
-
-    ASSERT_TRUE(adapter_->Initialize(config));
-    EXPECT_EQ(adapter_->GetActiveBackend(), ArxAdapter::BackendType::Bridge);
-    EXPECT_EQ(adapter_->GetBackendName(), "bridge_ipc");
-
-    adapter_->Start();
-    const auto cmd = MakeTestCommand(77);
-    adapter_->SetCommand(cmd);
-
-    protocol::ArmCommandFrame received_cmd;
-    ASSERT_TRUE(bridge.ReceiveCommand(&received_cmd, std::chrono::milliseconds(500)));
-    EXPECT_EQ(received_cmd.header.seq, cmd.header.seq);
-    EXPECT_EQ(received_cmd.joint_count, cmd.joint_count);
-
-    protocol::ArmStateFrame state;
-    state.header.seq = 5;
-    state.header.source_monotonic_ns = GetMonotonicNs();
-    state.header.publish_monotonic_ns = state.header.source_monotonic_ns;
-    state.header.validity_flags =
-        protocol::kValidityPayloadValid | protocol::kValidityFromBackend;
-    state.backend_mode = static_cast<uint16_t>(ArxAdapter::BackendType::Bridge);
-    state.target_seq_applied = cmd.header.seq;
-    state.q = {0.11f, 0.22f, 0.33f, 0.44f, 0.55f, 0.66f};
-    state.dq = {0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.06f};
-    state.q_target = cmd.q;
-    for (size_t i = 0; i < state.tracking_error.size(); ++i)
-    {
-        state.tracking_error[i] = state.q_target[i] - state.q[i];
-    }
-    ASSERT_TRUE(bridge.SendState(state));
-
-    protocol::ArmStateFrame received_state;
-    bool got_state = false;
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        if (adapter_->GetState(received_state) &&
-            (received_state.header.validity_flags & protocol::kValidityFromBackend) != 0u)
-        {
-            got_state = true;
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-    ASSERT_TRUE(got_state);
-    EXPECT_NE(received_state.header.validity_flags & protocol::kValidityFromBackend, 0u);
-    EXPECT_EQ(received_state.backend_mode, static_cast<uint16_t>(ArxAdapter::BackendType::Bridge));
-    EXPECT_NEAR(received_state.q[0], state.q[0], 1e-6f);
-
-    const auto stats = adapter_->GetStats();
-    EXPECT_EQ(stats.active_backend, ArxAdapter::BackendType::Bridge);
-    EXPECT_EQ(stats.backend_name, "bridge_ipc");
-#endif
-}
+// Bridge backend fallback test removed - only InProcessSdk is supported
 
 // ============================================================================
 // Lifecycle Tests
