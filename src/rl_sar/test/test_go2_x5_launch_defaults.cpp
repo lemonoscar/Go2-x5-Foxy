@@ -66,7 +66,12 @@ int main()
     RequireContains(launch_content, "\"--manifest-path\"", launch_file.string());
     RequireContains(launch_content, "DeclareLaunchArgument(\"go2_enable_ros2_runtime\"", launch_file.string());
     RequireContains(launch_content, "go2_rmw_implementation", launch_file.string());
-    // Bridge-related launch arguments removed - only InProcessSdk is supported
+    Require(launch_content.find("start_arm_bridge") == std::string::npos,
+        "start_arm_bridge launch argument should be removed");
+    Require(launch_content.find("go2_arm_bridge_transport_value") == std::string::npos,
+        "bridge transport launch defaults should be removed");
+    Require(launch_content.find("bridge_rmw_implementation_value") == std::string::npos,
+        "bridge RMW launch defaults should be removed");
     RequireContains(launch_content, "go2_x5_node", launch_file.string());
     Require(launch_content.find("arx_x5_bridge") == std::string::npos,
         "arx_x5_bridge node should be removed");

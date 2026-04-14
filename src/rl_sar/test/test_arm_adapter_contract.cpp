@@ -12,6 +12,8 @@
 
 #include <chrono>
 #include <array>
+#include <cerrno>
+#include <cstring>
 #include <string>
 #include <thread>
 #include <vector>
@@ -80,6 +82,21 @@ uint16_t ReserveUdpPort()
         close(fd);
     }
     return port;
+}
+
+bool CanCreateDatagramSocket(std::string* error)
+{
+    const int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0)
+    {
+        if (error)
+        {
+            *error = std::strerror(errno);
+        }
+        return false;
+    }
+    close(fd);
+    return true;
 }
 
 class UdpArmBridgeHarness
@@ -273,6 +290,12 @@ TEST_F(ArxAdapterContract, InitializesInProcessSdkBackendWithFakeHardwareLibrary
     if (fake_sdk_lib.empty())
     {
         GTEST_SKIP() << "fake ARX hardware library not configured";
+    }
+
+    std::string socket_error;
+    if (!CanCreateDatagramSocket(&socket_error))
+    {
+        GTEST_SKIP() << "socket probes blocked on this host: " << socket_error;
     }
 
     auto config = MakeDefaultConfig();

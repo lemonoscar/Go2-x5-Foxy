@@ -53,7 +53,6 @@ echo
 
 echo "[5] Runtime linker check"
 BIN_REAL="${HOME}/rl_ras_n/install/lib/rl_sar/rl_real_go2_x5"
-BIN_BRIDGE="${HOME}/rl_ras_n/install/lib/rl_sar/arx_x5_bridge.py"
 if [ -x "${BIN_REAL}" ]; then
   echo "--- ldd rl_real_go2_x5 ---"
   ldd "${BIN_REAL}" | egrep -i "unitree|dds|cyclone|fastrtps|iceoryx|yaml|protobuf|stdc\\+\\+" || true

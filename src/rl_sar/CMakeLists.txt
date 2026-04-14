@@ -538,20 +538,7 @@ endif()
 
 # executable for rl real l4w4 (removed - only go2-x5 supported)
 
-# executable for actuator net
-if(NOT USE_CMAKE)
-    if(FALSE)
-        catkin_install_python(PROGRAMS
-            scripts/arx_x5_bridge.py
-            DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-        )
-    elseif($ENV{ROS_DISTRO} MATCHES "foxy")
-        install(PROGRAMS
-            scripts/arx_x5_bridge.py
-            DESTINATION lib/${PROJECT_NAME}
-        )
-    endif()
-endif()
+# External ARX bridge script removed. Arm control is provided by ArxAdapter only.
 
 if(NOT USE_CMAKE)
     if($ENV{ROS_DISTRO} MATCHES "foxy")

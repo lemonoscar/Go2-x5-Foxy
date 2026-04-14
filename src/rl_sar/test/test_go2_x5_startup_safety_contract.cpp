@@ -58,6 +58,8 @@ int main()
     const std::filesystem::path utility_file = source_dir + "/src/rl_sar/go2x5/state/go2_x5_utility.cpp";
     const std::filesystem::path state_io_file = source_dir + "/src/rl_sar/go2x5/state/go2_x5_state_io.cpp";
     const std::filesystem::path ros_file = source_dir + "/src/rl_sar/go2x5/comm/go2_x5_ros.cpp";
+    const std::filesystem::path ipc_file = source_dir + "/src/rl_sar/go2x5/comm/go2_x5_ipc.cpp";
+    const std::filesystem::path adapter_file = source_dir + "/src/rl_sar/adapters/arx/arx_adapter.cpp";
     const std::filesystem::path shutdown_file = source_dir + "/src/rl_sar/go2x5/safety/go2_x5_safe_shutdown.cpp";
     const std::filesystem::path bridge_file = source_dir + "/scripts/arx_x5_bridge.py";
 
@@ -66,8 +68,10 @@ int main()
     Require(std::filesystem::exists(utility_file), "go2_x5_utility.cpp missing");
     Require(std::filesystem::exists(state_io_file), "go2_x5_state_io.cpp missing");
     Require(std::filesystem::exists(ros_file), "go2_x5_ros.cpp missing");
+    Require(std::filesystem::exists(ipc_file), "go2_x5_ipc.cpp missing");
+    Require(std::filesystem::exists(adapter_file), "arx_adapter.cpp missing");
     Require(std::filesystem::exists(shutdown_file), "go2_x5_safe_shutdown.cpp missing");
-    Require(std::filesystem::exists(bridge_file), "arx_x5_bridge.py missing");
+    Require(!std::filesystem::exists(bridge_file), "arx_x5_bridge.py should be removed");
 
     const std::string fsm_content = ReadAll(fsm_file.string());
     RequireContains(fsm_content, "fsm_command->motor_command.q[i] = kPassivePosStopF;", fsm_file.string());
@@ -92,9 +96,21 @@ int main()
         core_content,
         "final_body_command = build_body_command_from_robot_command(supervisor_mode);",
         core_file.string());
+    RequireContains(
+        core_content,
+        "[Boot] Arm actuation unavailable: ArxAdapter inactive. ",
+        core_file.string());
     RequireNotContains(
         core_content,
         "final_body_command = this->BuildHoldBodyCommandFrame(now_monotonic_ns, supervisor_mode);",
+        core_file.string());
+    RequireNotContains(
+        core_content,
+        "[Boot] Setting up external arm bridge interface",
+        core_file.string());
+    RequireNotContains(
+        core_content,
+        "this->SetupArmBridgeInterface();",
         core_file.string());
 
     const std::string utility_content = ReadAll(utility_file.string());
@@ -121,20 +137,28 @@ int main()
     RequireContains(ros_content, "const bool monitor_tracking_error = this->ShouldActuateArmForMode(supervisor_mode);", ros_file.string());
     RequireContains(ros_content, "this->arm_tracking_error_high_stamp = std::chrono::steady_clock::time_point{};", ros_file.string());
 
+    const std::string ipc_content = ReadAll(ipc_file.string());
+    RequireContains(
+        ipc_content,
+        "Arm bridge fallback has been removed. ",
+        ipc_file.string());
+
+    const std::string adapter_content = ReadAll(adapter_file.string());
+    RequireContains(
+        adapter_content,
+        "BridgeBackend removed - only InProcessSdk is supported",
+        adapter_file.string());
+    RequireContains(
+        adapter_content,
+        "return \"sdk_inprocess_arxcan\";",
+        adapter_file.string());
+
     const std::string shutdown_content = ReadAll(shutdown_file.string());
     RequireContains(shutdown_content, "if (this->arm_split_control_enabled && this->IsArmJointIndex(i))", shutdown_file.string());
     RequireContains(shutdown_content, "const auto default_pos = GetDefaultDofPos();", shutdown_file.string());
     RequireContains(shutdown_content, "if (this->robot_state.motor_state.q.size() >= static_cast<size_t>(num_dofs))", shutdown_file.string());
     RequireContains(shutdown_content, "if (this->ShouldExecuteActiveShutdown())", shutdown_file.string());
     RequireContains(shutdown_content, "[Shutdown] Passive shutdown: body command already inactive, skip soft land.", shutdown_file.string());
-
-    const std::string bridge_content = ReadAll(bridge_file.string());
-    RequireContains(bridge_content, "def _arm_mode_allows_actuation(mode: int) -> bool:", bridge_file.string());
-    RequireContains(bridge_content, "def _deactivate_active_command(self) -> None:", bridge_file.string());
-    RequireContains(bridge_content, "was_receiving = self.recv_cmd", bridge_file.string());
-    RequireContains(bridge_content, "self.backend.stop()", bridge_file.string());
-    RequireContains(bridge_content, "if not _arm_mode_allows_actuation(mode):", bridge_file.string());
-    RequireContains(bridge_content, "self.recv_cmd = False", bridge_file.string());
 
     std::cout << "test_go2_x5_startup_safety_contract passed\n";
     return 0;

@@ -300,16 +300,9 @@ void RL_Real_Go2X5::PollArmBridgeIpcState()
 
 void RL_Real_Go2X5::SetupArmBridgeInterface()
 {
-    if (!this->arm_split_control_enabled || this->arm_joint_count <= 0)
-    {
-        return;
-    }
-    if (!this->UseArmBridgeIpc())
-    {
-        std::cout << LOGGER::WARNING
-                  << "ROS Float32 arm bridge fallback disabled. Forcing typed IPC transport."
-                  << std::endl;
-        this->arm_bridge_transport = "ipc";
-    }
-    this->SetupArmBridgeIpc();
+    this->CloseArmBridgeIpc();
+    std::cout << LOGGER::WARNING
+              << "Arm bridge fallback has been removed. "
+              << "ArxAdapter is required for arm actuation."
+              << std::endl;
 }

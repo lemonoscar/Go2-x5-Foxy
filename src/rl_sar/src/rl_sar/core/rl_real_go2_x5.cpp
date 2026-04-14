@@ -506,18 +506,23 @@ RL_Real_Go2X5::RL_Real_Go2X5(int argc, char **argv)
     std::cout << LOGGER::INFO << "[Boot] Motion control-related service released" << std::endl;
 
     this->InitializeRuntimeIntegrations();
-    if (!this->arx_adapter_active_)
+    this->CloseArmBridgeIpc();
+    if (this->arm_split_control_enabled && this->arm_joint_count > 0)
     {
-        std::cout << LOGGER::INFO << "[Boot] Setting up external arm bridge interface" << std::endl;
-        this->SetupArmBridgeInterface();
-    }
-    else
-    {
-        this->CloseArmBridgeIpc();
-        std::cout << LOGGER::INFO
-                  << "[Boot] Arm transport owned by ArxAdapter backend="
-                  << this->arx_adapter_->GetBackendName()
-                  << std::endl;
+        if (this->arx_adapter_active_)
+        {
+            std::cout << LOGGER::INFO
+                      << "[Boot] Arm transport owned by ArxAdapter backend="
+                      << this->arx_adapter_->GetBackendName()
+                      << std::endl;
+        }
+        else
+        {
+            std::cout << LOGGER::WARNING
+                      << "[Boot] Arm actuation unavailable: ArxAdapter inactive. "
+                      << "Bridge fallback has been removed."
+                      << std::endl;
+        }
     }
     this->RefreshSupervisorState("boot");
     std::cout << LOGGER::INFO << "[Boot] Supervisor refresh complete" << std::endl;
@@ -2994,14 +2999,7 @@ void RL_Real_Go2X5::RunModel()
         }
         this->ValidateJointMappingOrThrow("go2_x5/robot_lab/config.yaml");
         this->SetupArmCommandSubscriber();
-        if (!this->arx_adapter_active_)
-        {
-            this->SetupArmBridgeInterface();
-        }
-        else
-        {
-            this->CloseArmBridgeIpc();
-        }
+        this->CloseArmBridgeIpc();
         this->arm_runtime_params_ready = true;
     }
 
