@@ -214,36 +214,8 @@ public:
         return loader_.Get<bool>("real_deploy_exclusive_keyboard_control", true);
     }
 
-    float GetCmdVelAlpha() const {
-        return loader_.Get<float>("cmd_vel_alpha", 0.2f);
-    }
-
     float GetJoystickDeadband() const {
         return loader_.Get<float>("joystick_deadband", 0.05f);
-    }
-
-    bool GetKey2PreferTopicCommand() const {
-        return loader_.Get<bool>("key2_prefer_topic_command", true);
-    }
-
-    bool GetKey1PreferNavigationMode() const {
-        return loader_.Get<bool>("key1_prefer_navigation_mode", false);
-    }
-
-    bool GetKey1PublishCmdVelOnNavigation() const {
-        return loader_.Get<bool>("key1_publish_cmd_vel_on_navigation", true);
-    }
-
-    float GetKey1NavigationCmdX() const {
-        return loader_.Get<float>("key1_navigation_cmd_x", 0.5f);
-    }
-
-    float GetKey1NavigationCmdY() const {
-        return loader_.Get<float>("key1_navigation_cmd_y", 0.0f);
-    }
-
-    float GetKey1NavigationCmdYaw() const {
-        return loader_.Get<float>("key1_navigation_cmd_yaw", 0.0f);
     }
 
     float GetFixedCmdX() const {

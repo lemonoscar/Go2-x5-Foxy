@@ -69,8 +69,6 @@ struct DeployConfig
 struct OperatorConfig
 {
     bool real_deploy_exclusive_keyboard_control = false;
-    bool key1_prefer_navigation_mode = false;
-    bool key2_prefer_topic_command = false;
     float fixed_cmd_x = 0.0f;
     float fixed_cmd_y = 0.0f;
     float fixed_cmd_yaw = 0.0f;
@@ -160,7 +158,7 @@ inline ConfigLayerDomain ClassifyKey(const std::string& key)
     }
 
     if (IsOneOf(key, {
-            "cmd_vel_alpha", "joystick_deadband", "arm_joint_command_topic", "arm_control_mode",
+            "joystick_deadband", "arm_joint_command_topic", "arm_control_mode",
             "arm_bridge_cmd_topic", "arm_bridge_state_topic", "arm_bridge_require_state",
             "arm_bridge_require_live_state", "arm_bridge_shadow_feedback_enabled",
             "arm_bridge_state_timeout_sec", "arm_hold_enabled",
@@ -173,9 +171,7 @@ inline ConfigLayerDomain ClassifyKey(const std::string& key)
     }
 
     if (IsOneOf(key, {
-            "real_deploy_exclusive_keyboard_control", "fixed_cmd_x", "fixed_cmd_y", "fixed_cmd_yaw",
-            "key1_prefer_navigation_mode", "key1_publish_cmd_vel_on_navigation", "key1_navigation_cmd_x",
-            "key1_navigation_cmd_y", "key1_navigation_cmd_yaw", "key2_prefer_topic_command"}))
+            "real_deploy_exclusive_keyboard_control", "fixed_cmd_x", "fixed_cmd_y", "fixed_cmd_yaw"}))
     {
         return ConfigLayerDomain::Operator;
     }
@@ -366,10 +362,6 @@ private:
 
         this->typed_config_.operator_config.real_deploy_exclusive_keyboard_control =
             detail::ReadScalar<bool>(node, "real_deploy_exclusive_keyboard_control", false);
-        this->typed_config_.operator_config.key1_prefer_navigation_mode =
-            detail::ReadScalar<bool>(node, "key1_prefer_navigation_mode", false);
-        this->typed_config_.operator_config.key2_prefer_topic_command =
-            detail::ReadScalar<bool>(node, "key2_prefer_topic_command", false);
         this->typed_config_.operator_config.fixed_cmd_x = detail::ReadScalar<float>(node, "fixed_cmd_x", 0.0f);
         this->typed_config_.operator_config.fixed_cmd_y = detail::ReadScalar<float>(node, "fixed_cmd_y", 0.0f);
         this->typed_config_.operator_config.fixed_cmd_yaw = detail::ReadScalar<float>(node, "fixed_cmd_yaw", 0.0f);

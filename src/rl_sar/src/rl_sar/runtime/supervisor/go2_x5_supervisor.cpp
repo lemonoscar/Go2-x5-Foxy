@@ -238,12 +238,12 @@ WatchdogStatus Supervisor::EvaluateWatchdog(const WatchdogInput& input) const
         (!this->config_.require_manifest_valid || status.manifest_valid) &&
         status.heartbeat_fresh &&
         status.body_state_fresh &&
-        status.arm_state_fresh &&
-        status.policy_fresh &&
-        status.policy_health_ok;
+        status.arm_state_fresh;
 
     status.active_gate_ok =
         status.ready_gate_ok &&
+        status.policy_fresh &&
+        status.policy_health_ok &&
         status.body_dds_write_ok &&
         status.arm_backend_valid &&
         !status.arm_tracking_error_high;

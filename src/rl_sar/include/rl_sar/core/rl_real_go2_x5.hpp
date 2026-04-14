@@ -31,12 +31,8 @@
 #include <string>
 #include <vector>
 
-#if defined(USE_ROS1) && defined(USE_ROS)
-#include <ros/ros.h>
-#include <geometry_msgs/Twist.h>
-#elif defined(USE_ROS2) && defined(USE_ROS)
+#if defined(USE_ROS2) && defined(USE_ROS)
 #include <rclcpp/rclcpp.hpp>
-#include <geometry_msgs/msg/twist.hpp>
 #endif
 
 class LoopFunc;
@@ -72,6 +68,12 @@ namespace rl_sar::diagnostics
 {
 class DiagnosticsPublisher;
 class DriftMetricsRecorder;
+class DriftDataRecorder;
+}
+
+namespace rl_sar::observation
+{
+class ObservationBuilder;
 }
 
 namespace rl_sar::logger
@@ -171,6 +173,8 @@ private:
     std::unique_ptr<rl_sar::adapters::ArxAdapter> arx_adapter_;
     std::unique_ptr<rl_sar::diagnostics::DiagnosticsPublisher> diagnostics_publisher_;
     std::unique_ptr<rl_sar::diagnostics::DriftMetricsRecorder> drift_recorder_;
+    std::unique_ptr<rl_sar::diagnostics::DriftDataRecorder> drift_data_recorder_;
+    std::unique_ptr<rl_sar::observation::ObservationBuilder> observation_builder_;
     std::unique_ptr<rl_sar::logger::EventLogger> event_logger_;
 
     std::string deploy_manifest_path_;
@@ -195,7 +199,17 @@ private:
     uint32_t mode_transition_count_ = 0;
     uint64_t last_coordinator_jitter_us_ = 0;
     double last_coordinator_frequency_hz_ = 0.0;
+    uint64_t last_policy_age_ns_ = 0;
+    uint64_t last_policy_seq_runtime_ = 0;
+    bool last_policy_is_fresh_ = false;
+    bool last_policy_cmd_from_fresh_sample_ = false;
+    bool observation_builder_enabled_ = false;
+    bool observation_builder_stats_logged_ = false;
+    bool observation_snapshot_checked_ = false;
     std::chrono::steady_clock::time_point last_coordinator_tick_{};
+    std::string observation_snapshot_path_;
+    std::array<float, 3> latest_body_base_lin_vel_{{0.0f, 0.0f, 0.0f}};
+    uint16_t latest_body_validity_flags_ = 0;
 
     void InitializeConfigLoader();
     void InitializeRuntimeOptions(int argc, char **argv);
@@ -208,9 +222,11 @@ private:
     void InitializeRuntimeIntegrations();
     void InitializeAdapters();
     void InitializeDiagnostics();
+    void InitializeObservationBuilder();
     void ValidateJointMappingOrThrow(const char* stage) const;
     Go2X5Supervisor::WatchdogInput BuildSupervisorInput() const;
     rl_sar::runtime::coordinator::Input BuildCoordinatorInput(uint64_t now_monotonic_ns) const;
+    std::vector<float> BuildPolicyObservation();
     bool SyncBodyStateFromAdapter(RobotState<float>* state);
     bool SyncArmStateFromAdapter(RobotState<float>* state);
     void UpdateRuntimeDiagnostics(const Go2X5Supervisor::TransitionResult* transition_result);
@@ -301,7 +317,6 @@ private:
     void HandleArmBridgeStateFrame(const rl_sar::protocol::ArmStateFrame& frame,
                                   const char* context);
     void ReadArmStateFromExternal(RobotState<float> *state);
-    void WriteArmCommandToExternal(const RobotCommand<float> *command);
     void ApplyArmHold(const std::vector<float>& target, const char* reason);
     bool ArmCommandDifferent(const std::vector<float>& a, const std::vector<float>& b) const;
     void ExecuteSafeShutdownSequence();
@@ -309,16 +324,10 @@ private:
     void PublishWholeBodyPose(const std::vector<float>& pose,
                               const std::vector<float>& kp,
                               const std::vector<float>& kd);
-    void MaybePublishKey1CmdVel();
     void RecordPolicyInferenceTick();
     void HandleLoopException(const std::string& loop_name, const std::string& error);
     void HandleKey2ArmHold();
     void HandleKey3ArmDefault();
-    void HandleKey4ArmHoldToggle();
-
-    float cmd_vel_alpha = 0.2f;
-    bool cmd_vel_has_filtered = false;
-    bool key1_navigation_cmd_published = false;
 
     int arm_command_size = 0;
     bool arm_hold_enabled = true;
@@ -378,14 +387,12 @@ private:
     bool safe_shutdown_done = false;
     std::atomic<bool> arm_safe_shutdown_active{false};
     bool real_deploy_exclusive_keyboard_control = true;
-    bool cmd_vel_input_ignored_warned = false;
     bool policy_inference_log_enabled = true;
     float last_policy_inference_hz = 0.0f;
     std::chrono::steady_clock::time_point last_policy_inference_stamp{};
-    std::atomic<bool> operator_rl_enable_requested_{false};
+    std::atomic<bool> operator_manual_arm_requested_{false};
     std::atomic<bool> operator_estop_requested_{false};
     std::atomic<bool> operator_fault_reset_requested_{false};
-    std::atomic<bool> operator_manual_arm_request_{false};
     std::atomic<bool> policy_health_bad_runtime_{false};
     std::atomic<bool> body_dds_write_ok_runtime_{true};
     mutable std::chrono::steady_clock::time_point whole_body_clip_warn_stamp{};
@@ -404,7 +411,6 @@ private:
     std::vector<float> arm_joint_lower_limits;
     std::vector<float> arm_joint_upper_limits;
 
-    mutable std::mutex cmd_vel_mutex;
     mutable std::mutex arm_command_mutex;
     mutable std::mutex arm_external_state_mutex;
     mutable std::mutex unitree_state_mutex;
@@ -412,20 +418,6 @@ private:
     mutable std::mutex policy_frame_mutex;
     mutable std::mutex runtime_metrics_mutex;
 
-#if defined(USE_ROS1) && defined(USE_ROS)
-    std::shared_ptr<ros::NodeHandle> ros1_nh;
-    geometry_msgs::Twist cmd_vel;
-    geometry_msgs::Twist cmd_vel_filtered;
-    ros::Publisher cmd_vel_publisher;
-    ros::Subscriber cmd_vel_subscriber;
-    void CmdvelCallback(const geometry_msgs::Twist::ConstPtr &msg);
-#elif defined(USE_ROS2) && defined(USE_ROS)
-    geometry_msgs::msg::Twist cmd_vel;
-    geometry_msgs::msg::Twist cmd_vel_filtered;
-    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_publisher;
-    rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_subscriber;
-    void CmdvelCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
-#endif
 };
 
 #endif // RL_REAL_GO2_X5_HPP

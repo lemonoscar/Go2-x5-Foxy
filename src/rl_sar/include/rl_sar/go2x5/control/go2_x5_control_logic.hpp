@@ -6,16 +6,9 @@
 namespace Go2X5ControlLogic
 {
 
-enum class Key1Mode
-{
-    FixedCommand,
-    Navigation
-};
-
 enum class ArmPoseSource
 {
     None,
-    TopicCommand,
     KeyPose,
     HoldPose
 };
@@ -41,50 +34,6 @@ struct ArmRuntimeStateSnapshot
     std::vector<float> command_smoothed;
 };
 
-struct Key1NavigationPublishRequest
-{
-    bool exclusive_control = false;
-    bool navigation_mode = false;
-    bool key1_pressed = false;
-    bool already_published = false;
-    bool publish_enabled = true;
-};
-
-struct Key1NavigationCommand
-{
-    float x = 0.5f;
-    float y = 0.0f;
-    float yaw = 0.0f;
-};
-
-inline Key1Mode ResolveKey1Mode(bool prefer_navigation_mode)
-{
-    return prefer_navigation_mode ? Key1Mode::Navigation : Key1Mode::FixedCommand;
-}
-
-inline bool ShouldResetKey1NavigationPublished(bool navigation_mode)
-{
-    return !navigation_mode;
-}
-
-inline bool ShouldPublishKey1NavigationCmd(const Key1NavigationPublishRequest& request)
-{
-    return !request.exclusive_control &&
-           request.navigation_mode &&
-           request.key1_pressed &&
-           !request.already_published &&
-           request.publish_enabled;
-}
-
-inline Key1NavigationCommand BuildKey1NavigationCommand(float x, float y, float yaw)
-{
-    Key1NavigationCommand command;
-    command.x = x;
-    command.y = y;
-    command.yaw = yaw;
-    return command;
-}
-
 inline bool HasEnoughPose(const std::vector<float>& pose, int arm_size)
 {
     return arm_size > 0 && pose.size() >= static_cast<size_t>(arm_size);
@@ -106,22 +55,12 @@ inline std::vector<float> TrimPose(const std::vector<float>& pose, int arm_size)
 
 inline ArmPoseSelection SelectKey2ArmPose(
     int arm_size,
-    bool prefer_topic_command,
-    bool topic_command_received,
-    const std::vector<float>& topic_command_pose,
     const std::vector<float>& key_pose,
     const std::vector<float>& hold_pose)
 {
     ArmPoseSelection selection;
     if (arm_size <= 0)
     {
-        return selection;
-    }
-
-    if (prefer_topic_command && topic_command_received && HasEnoughPose(topic_command_pose, arm_size))
-    {
-        selection.pose = TrimPose(topic_command_pose, arm_size);
-        selection.source = ArmPoseSource::TopicCommand;
         return selection;
     }
 

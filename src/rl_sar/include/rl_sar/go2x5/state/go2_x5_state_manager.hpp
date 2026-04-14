@@ -54,12 +54,6 @@ struct ThreadSafeState {
     bool arm_bridge_state_valid = false;
     bool arm_bridge_state_from_backend = false;
 
-    // Control state (use mutex for all access)
-    mutable std::mutex control_mutex;
-    float cmd_vel_x = 0.0f;
-    float cmd_vel_y = 0.0f;
-    float cmd_vel_yaw = 0.0f;
-    bool navigation_mode = false;
 };
 
 /**
@@ -93,12 +87,6 @@ struct StateSnapshot {
     std::chrono::steady_clock::time_point arm_bridge_state_stamp;
     bool arm_bridge_state_valid = false;
     bool arm_bridge_state_from_backend = false;
-
-    // Control state
-    float cmd_vel_x = 0.0f;
-    float cmd_vel_y = 0.0f;
-    float cmd_vel_yaw = 0.0f;
-    bool navigation_mode = false;
 
     // Timestamp
     std::chrono::steady_clock::time_point snapshot_time;
@@ -200,22 +188,6 @@ public:
 
     // Get arm bridge state timestamp
     std::chrono::steady_clock::time_point GetArmBridgeStateStamp() const;
-
-    // ========================================================================
-    // Control State Access
-    // ========================================================================
-
-    struct ControlCommand {
-        float x = 0.0f;
-        float y = 0.0f;
-        float yaw = 0.0f;
-    };
-
-    ControlCommand GetControlCommand() const;
-    void SetControlCommand(float x, float y, float yaw);
-
-    bool IsNavigationMode() const;
-    void SetNavigationMode(bool enabled);
 
     // ========================================================================
     // Snapshot Operations

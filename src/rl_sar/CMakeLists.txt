@@ -383,6 +383,32 @@ if(NOT USE_CMAKE)
     endif()
 endif()
 
+# library for deterministic deployment observations
+add_library(observation_builder src/rl_sar/observation/observation_builder.cpp)
+if(NOT USE_CMAKE)
+    if($ENV{ROS_DISTRO} MATCHES "foxy")
+        install(TARGETS observation_builder DESTINATION lib/${PROJECT_NAME})
+    endif()
+endif()
+
+# library for raw drift data capture
+add_library(drift_data_recorder src/rl_sar/diagnostics/drift_data_recorder.cpp)
+target_link_libraries(drift_data_recorder PUBLIC Threads::Threads)
+if(NOT USE_CMAKE)
+    if($ENV{ROS_DISTRO} MATCHES "foxy")
+        install(TARGETS drift_data_recorder DESTINATION lib/${PROJECT_NAME})
+    endif()
+endif()
+
+# library for diagnostic aggregation
+add_library(diagnostic_aggregator src/rl_sar/diagnostics/diagnostic_aggregator.cpp)
+target_link_libraries(diagnostic_aggregator PUBLIC Threads::Threads)
+if(NOT USE_CMAKE)
+    if($ENV{ROS_DISTRO} MATCHES "foxy")
+        install(TARGETS diagnostic_aggregator DESTINATION lib/${PROJECT_NAME})
+    endif()
+endif()
+
 # library for event logger
 add_library(event_logger src/rl_sar/logger/event_logger.cpp)
 target_link_libraries(event_logger PUBLIC Threads::Threads)
@@ -480,6 +506,9 @@ if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
         arx_adapter
         rl_sdk
         observation_buffer
+        observation_builder
+        drift_data_recorder
+        diagnostic_aggregator
         event_logger
         ${YAML_CPP_LIBRARIES}
     )
@@ -638,6 +667,11 @@ if(USE_CMAKE AND BUILD_TESTING)
     target_link_libraries(test_go2_x5_manifest_contract ${YAML_CPP_LIBRARIES} Threads::Threads)
     add_test(NAME test_go2_x5_manifest_contract COMMAND test_go2_x5_manifest_contract)
 
+    add_executable(test_go2_x5_runtime_validator
+        test/test_go2_x5_runtime_validator.cpp)
+    target_link_libraries(test_go2_x5_runtime_validator Threads::Threads)
+    add_test(NAME test_go2_x5_runtime_validator COMMAND test_go2_x5_runtime_validator)
+
     add_executable(test_go2_x5_supervisor_contract
         test/test_go2_x5_supervisor_contract.cpp
         src/rl_sar/runtime/supervisor/go2_x5_supervisor.cpp)
@@ -700,11 +734,15 @@ if(USE_CMAKE AND BUILD_TESTING)
     endif()
 
     # ARX adapter tests
+    add_library(fake_arx_hardware SHARED test/fake_arx_hardware.cpp)
     add_executable(test_arm_adapter_contract
         test/test_arm_adapter_contract.cpp
         src/rl_sar/adapters/arx/arx_adapter.cpp
         src/rl_sar/protocol/go2_x5_protocol.cpp)
     target_include_directories(test_arm_adapter_contract PRIVATE include)
+    add_dependencies(test_arm_adapter_contract fake_arx_hardware)
+    target_compile_definitions(test_arm_adapter_contract PRIVATE
+        RL_SAR_TEST_FAKE_ARX_HARDWARE_LIB=\"$<TARGET_FILE:fake_arx_hardware>\")
     target_link_libraries(test_arm_adapter_contract
         gtest
         gtest_main
@@ -713,7 +751,27 @@ if(USE_CMAKE AND BUILD_TESTING)
     )
     add_test(NAME test_arm_adapter_contract COMMAND test_arm_adapter_contract)
 
+    add_executable(test_observation_builder test/test_observation_builder.cpp)
+    target_include_directories(test_observation_builder PRIVATE include)
+    target_link_libraries(test_observation_builder
+        gtest
+        gtest_main
+        observation_builder
+        rl_sdk
+        observation_buffer
+        Threads::Threads
+        ${YAML_CPP_LIBRARIES}
+    )
+    add_test(NAME test_observation_builder COMMAND test_observation_builder)
+
     # Diagnostics tests
+    add_executable(test_drift_data_recorder
+        test/test_drift_data_recorder.cpp
+        src/rl_sar/diagnostics/drift_data_recorder.cpp)
+    target_include_directories(test_drift_data_recorder PRIVATE include)
+    target_link_libraries(test_drift_data_recorder Threads::Threads)
+    add_test(NAME test_drift_data_recorder COMMAND test_drift_data_recorder)
+
     add_executable(test_drift_recorder
         test/test_drift_recorder.cpp
         src/rl_sar/diagnostics/drift_recorder.cpp)
@@ -727,6 +785,13 @@ if(USE_CMAKE AND BUILD_TESTING)
     target_include_directories(test_diagnostics_publisher PRIVATE include)
     target_link_libraries(test_diagnostics_publisher Threads::Threads)
     add_test(NAME test_diagnostics_publisher COMMAND test_diagnostics_publisher)
+
+    add_executable(test_diagnostic_aggregator
+        test/test_diagnostic_aggregator.cpp
+        src/rl_sar/diagnostics/diagnostic_aggregator.cpp)
+    target_include_directories(test_diagnostic_aggregator PRIVATE include)
+    target_link_libraries(test_diagnostic_aggregator Threads::Threads)
+    add_test(NAME test_diagnostic_aggregator COMMAND test_diagnostic_aggregator)
 
     # Event logger tests
     add_executable(test_event_logger

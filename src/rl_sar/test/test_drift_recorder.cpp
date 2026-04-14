@@ -63,9 +63,25 @@ BodyStateFrame CreateTestBodyState(uint64_t timestamp_ns = 1000)
     BodyStateFrame frame;
     frame.header.source_monotonic_ns = timestamp_ns;
     frame.header.seq = 1;
+    frame.header.validity_flags = kValidityPayloadValid | kValidityPartial;
+    frame.imu_quat = {1.0f, 0.0f, 0.0f, 0.0f};
     frame.base_lin_vel = {0.0f, 0.0f, 0.0f};
     frame.base_ang_vel = {0.0f, 0.0f, 0.0f};
     return frame;
+}
+
+void SetYaw(BodyStateFrame* frame, const double yaw)
+{
+    if (!frame)
+    {
+        return;
+    }
+    frame->imu_quat = {
+        static_cast<float>(std::cos(yaw * 0.5)),
+        0.0f,
+        0.0f,
+        static_cast<float>(std::sin(yaw * 0.5)),
+    };
 }
 
 ArmStateFrame CreateTestArmState()
@@ -431,12 +447,14 @@ bool TestYawDriftComputation()
     auto cmd_ctx = CreateTestCommandContext(0.0, 0.0, 0.0);
 
     recorder.Update(body_state, arm_state, cmd_ctx);
+    body_state.header.source_monotonic_ns = 2000;
+    SetYaw(&body_state, 0.2);
+    recorder.Update(body_state, arm_state, cmd_ctx);
 
     auto snapshots = recorder.GetSnapshots();
-
-    // Should handle wraparound correctly
-    // With zero actual drift, yaw_drift should be near zero
-    if (!ExpectTrue(snapshots[0].yaw_drift >= 0.0, "yaw_drift non-negative")) { return false; }
+    if (!ExpectEq(snapshots.size(), 2, "Yaw drift snapshot count")) { return false; }
+    if (!ExpectTrue(snapshots[1].yaw_valid, "yaw_valid")) { return false; }
+    if (!ExpectNear(snapshots[1].yaw_drift, 0.2, "yaw_drift", 1e-3)) { return false; }
 
     std::cout << "PASS\n";
     return true;

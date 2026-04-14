@@ -57,9 +57,12 @@ int main()
     RequireContains(base_content, "arm_bridge_require_state: true", base_file);
     RequireContains(base_content, "arm_bridge_require_live_state: true", base_file);
     RequireContains(base_content, "arm_hold_enabled: true", base_file);
-    RequireContains(base_content, "key2_prefer_topic_command: true", base_file);
     RequireNotContains(base_content, "real_deploy_exclusive_keyboard_control:", base_file);
+    RequireNotContains(base_content, "key2_prefer_topic_command:", base_file);
+    RequireNotContains(base_content, "cmd_vel_alpha:", base_file);
     RequireNotContains(base_content, "key1_prefer_navigation_mode:", base_file);
+    RequireNotContains(base_content, "key1_publish_cmd_vel_on_navigation:", base_file);
+    RequireNotContains(base_content, "key1_navigation_cmd_x:", base_file);
     RequireNotContains(base_content, "fixed_cmd_x:", base_file);
 
     RequireContains(config_content, "model_name: \"policy_dogonly_20260401_9500.pt\"", config_file);
@@ -68,16 +71,21 @@ int main()
     RequireContains(config_content, "fixed_cmd_x: 0.5", config_file);
     RequireContains(config_content, "fixed_cmd_y: 0.0", config_file);
     RequireContains(config_content, "fixed_cmd_yaw: 0.0", config_file);
-    RequireContains(config_content, "key1_prefer_navigation_mode: false", config_file);
     RequireContains(config_content, "real_deploy_exclusive_keyboard_control: true", config_file);
     RequireContains(config_content, "arm_control_mode: \"split\"", config_file);
     RequireContains(config_content, "arm_bridge_require_state: true", config_file);
     RequireContains(config_content, "arm_bridge_require_live_state: true", config_file);
     RequireContains(config_content, "arm_bridge_shadow_feedback_enabled: false", config_file);
     RequireContains(config_content, "arm_hold_enabled: false", config_file);
-    RequireContains(config_content, "key2_prefer_topic_command: true", config_file);
     RequireContains(config_content, "arm_hold_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]", config_file);
     RequireContains(config_content, "arm_key_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]", config_file);
+    RequireNotContains(config_content, "cmd_vel_alpha:", config_file);
+    RequireNotContains(config_content, "key1_prefer_navigation_mode:", config_file);
+    RequireNotContains(config_content, "key1_publish_cmd_vel_on_navigation:", config_file);
+    RequireNotContains(config_content, "key1_navigation_cmd_x:", config_file);
+    RequireNotContains(config_content, "key1_navigation_cmd_y:", config_file);
+    RequireNotContains(config_content, "key1_navigation_cmd_yaw:", config_file);
+    RequireNotContains(config_content, "key2_prefer_topic_command:", config_file);
 
     std::cout << "go2_x5 config split test passed." << std::endl;
     return 0;

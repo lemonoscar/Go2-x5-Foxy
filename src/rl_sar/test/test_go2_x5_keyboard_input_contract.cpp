@@ -39,14 +39,27 @@ void RequireContains(const std::string& content, const std::string& needle, cons
     }
 }
 
+void RequireNotContains(const std::string& content, const std::string& needle, const std::string& file)
+{
+    if (content.find(needle) != std::string::npos)
+    {
+        std::cerr << "Unexpected snippet in " << file << ": " << needle << std::endl;
+        std::abort();
+    }
+}
+
 } // namespace
 
 int main()
 {
     const std::string source_dir = RL_SAR_SOURCE_DIR;
     const std::filesystem::path rl_sdk_file = source_dir + "/library/core/rl_sdk/rl_sdk.cpp";
+    const std::filesystem::path core_file = source_dir + "/src/rl_sar/core/rl_real_go2_x5.cpp";
+    const std::filesystem::path utility_file = source_dir + "/src/rl_sar/go2x5/state/go2_x5_utility.cpp";
 
     Require(std::filesystem::exists(rl_sdk_file), "rl_sdk.cpp missing");
+    Require(std::filesystem::exists(core_file), "rl_real_go2_x5.cpp missing");
+    Require(std::filesystem::exists(utility_file), "go2_x5_utility.cpp missing");
 
     const std::string content = ReadAll(rl_sdk_file.string());
     RequireContains(content, "isatty(STDIN_FILENO)", rl_sdk_file.string());
@@ -67,10 +80,38 @@ int main()
         content,
         "this->pending_keyboard_input.store(keyboard_event, std::memory_order_release);",
         rl_sdk_file.string());
+    RequireContains(content, "case Input::Keyboard::Num0:", rl_sdk_file.string());
+    RequireContains(content, "case Input::Keyboard::Num1:", rl_sdk_file.string());
+    RequireContains(content, "case Input::Keyboard::Num2:", rl_sdk_file.string());
+    RequireContains(content, "case Input::Keyboard::Num3:", rl_sdk_file.string());
+    RequireContains(content, "case Input::Keyboard::Space:", rl_sdk_file.string());
+    RequireContains(content, "case Input::Keyboard::Escape:", rl_sdk_file.string());
+    RequireContains(content, "case Input::Keyboard::R:", rl_sdk_file.string());
+    RequireContains(content, "this->control.current_keyboard = Input::Keyboard::None;", rl_sdk_file.string());
+    RequireNotContains(content, "[OperatorInput] source=keyboard:Num0 reason=get_up_request", rl_sdk_file.string());
+
+    const std::string core_content = ReadAll(core_file.string());
+    RequireContains(core_content, "if (IsPassiveBodyOutputMode(mode))", core_file.string());
+    RequireContains(core_content, "input.operator_enable = rl_active_requested;", core_file.string());
+    RequireContains(core_content, "input.manual_arm_request = this->operator_manual_arm_requested_.load", core_file.string());
+    RequireContains(core_content, "[SupervisorInput] source=keyboard:Num2 reason=manual_arm_request", core_file.string());
+    RequireContains(core_content, "[SupervisorInput] source=keyboard:Num3 reason=manual_arm_request", core_file.string());
+    RequireNotContains(core_content, "navigation_mode", core_file.string());
+    RequireNotContains(core_content, "cmd_vel_", core_file.string());
+    RequireNotContains(core_content, "MaybeAdvanceKeyboardRlRequest", core_file.string());
+    RequireNotContains(core_content, "CurrentFsmStateName", core_file.string());
+
+    const std::string utility_content = ReadAll(utility_file.string());
     RequireContains(
-        content,
-        "[OperatorInput] source=keyboard:Num0 reason=get_up_request",
-        rl_sdk_file.string());
+        utility_content,
+        "Control frequency: ",
+        utility_file.string());
+    RequireContains(
+        utility_content,
+        "Policy inference frequency: ",
+        utility_file.string());
+    RequireNotContains(utility_content, "request_get_up_then_rl", utility_file.string());
+    RequireNotContains(utility_content, "request_rl_locomotion", utility_file.string());
 
     std::cout << "go2_x5 keyboard input contract test passed." << std::endl;
     return 0;

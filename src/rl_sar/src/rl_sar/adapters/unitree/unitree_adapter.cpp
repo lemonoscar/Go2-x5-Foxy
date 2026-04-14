@@ -30,6 +30,67 @@ constexpr uint8_t kMotorModeDisabled = 0x00;
 
 // Unitree Go2 has 20 motors total (12 leg + 6 arm + 2 waist)
 constexpr int kUnitreeMotorCount = 20;
+constexpr float kQuaternionNormEpsilon = 1e-6f;
+
+std::array<float, 4> NormalizeQuaternion(const std::array<float, 4>& quat)
+{
+    float norm_sq = 0.0f;
+    for (float value : quat)
+    {
+        if (!std::isfinite(value))
+        {
+            return {1.0f, 0.0f, 0.0f, 0.0f};
+        }
+        norm_sq += value * value;
+    }
+
+    if (norm_sq <= kQuaternionNormEpsilon)
+    {
+        return {1.0f, 0.0f, 0.0f, 0.0f};
+    }
+
+    const float inv_norm = 1.0f / std::sqrt(norm_sq);
+    return {
+        quat[0] * inv_norm,
+        quat[1] * inv_norm,
+        quat[2] * inv_norm,
+        quat[3] * inv_norm,
+    };
+}
+
+std::array<float, 3> RotateInverse(const std::array<float, 4>& quat,
+                                   const std::array<float, 3>& vec)
+{
+    const auto q = NormalizeQuaternion(quat);
+    const float q_w = q[0];
+    const float q_x = q[1];
+    const float q_y = q[2];
+    const float q_z = q[3];
+
+    const float v_x = vec[0];
+    const float v_y = vec[1];
+    const float v_z = vec[2];
+
+    const float a_x = v_x * (2.0f * q_w * q_w - 1.0f);
+    const float a_y = v_y * (2.0f * q_w * q_w - 1.0f);
+    const float a_z = v_z * (2.0f * q_w * q_w - 1.0f);
+
+    const float cross_x = q_y * v_z - q_z * v_y;
+    const float cross_y = q_z * v_x - q_x * v_z;
+    const float cross_z = q_x * v_y - q_y * v_x;
+
+    const float b_x = cross_x * q_w * 2.0f;
+    const float b_y = cross_y * q_w * 2.0f;
+    const float b_z = cross_z * q_w * 2.0f;
+
+    const float dot = q_x * v_x + q_y * v_y + q_z * v_z;
+
+    const float c_x = q_x * dot * 2.0f;
+    const float c_y = q_y * dot * 2.0f;
+    const float c_z = q_z * dot * 2.0f;
+
+    return {a_x - b_x + c_x, a_y - b_y + c_y, a_z - b_z + c_z};
+}
 
 bool IsPassiveBodyJointCommand(const float q,
                                const float dq,
@@ -367,10 +428,16 @@ bool UnitreeAdapter::GetState(protocol::BodyStateFrame& state)
     {
         const auto age = std::chrono::duration_cast<std::chrono::microseconds>(now - state_stamp_);
         state.lowstate_age_us = static_cast<uint32_t>(age.count());
+        const uint64_t timeout_us = static_cast<uint64_t>(config_.lowstate_timeout_ms * 1000.0);
+        if (static_cast<uint64_t>(state.lowstate_age_us) > timeout_us)
+        {
+            state.header.validity_flags |= protocol::kValidityStale;
+        }
     }
     else
     {
         state.lowstate_age_us = UINT32_MAX;
+        state.header.validity_flags |= protocol::kValidityStale;
     }
 
     return true;
@@ -453,6 +520,10 @@ void UnitreeAdapter::LowStateMessageHandler(const void* message)
     {
         latest_state_.imu_acc[i] = msg->imu_state().accelerometer()[static_cast<int>(i)];
     }
+    latest_state_.base_ang_vel = latest_state_.imu_gyro;
+    latest_state_.projected_gravity = RotateInverse(
+        latest_state_.imu_quat, std::array<float, 3>{0.0f, 0.0f, -1.0f});
+    latest_state_.base_lin_vel = {0.0f, 0.0f, 0.0f};
 
     // Copy motor state (we only care about the first 12 for leg DOFs)
     latest_state_.leg_q.fill(0.0f);
@@ -475,6 +546,11 @@ void UnitreeAdapter::LowStateMessageHandler(const void* message)
     latest_state_.header.source_monotonic_ns = now_ns;
     latest_state_.header.publish_monotonic_ns = now_ns;
     latest_state_.header.source_id = config_.source_id;
+    latest_state_.header.validity_flags =
+        protocol::kValidityPayloadValid |
+        protocol::kValidityFromBackend |
+        protocol::kValidityPartial;
+    latest_state_.header.fault_flags = 0;
 
     // Mark DDS as OK
     latest_state_.dds_ok = 1;

@@ -31,6 +31,10 @@ struct DiagnosticMetrics
     // Policy metrics
     uint64_t policy_latency_us = 0;         ///< Time from observation to action output (microseconds)
     double policy_frequency_hz = 0.0;       ///< Measured policy execution frequency
+    uint64_t policy_age_us = 0;             ///< Age of the policy sample currently applied by coordinator
+    uint64_t policy_seq = 0;                ///< Sequence number of the applied policy sample
+    bool policy_fresh = false;              ///< Whether the applied policy sample is still within freshness window
+    bool policy_from_fresh_sample = false;  ///< Whether the current body command came from a newly received sample
 
     // Coordinator metrics
     uint64_t coordinator_jitter_us = 0;     ///< Deviation from expected coordinator timing (microseconds)
@@ -43,10 +47,21 @@ struct DiagnosticMetrics
     // Arm tracking
     double arm_tracking_error_norm = 0.0;   ///< L2 norm of joint tracking error
     bool arm_tracking_healthy = true;       ///< Overall arm tracking health flag
+    std::string arm_backend_name;           ///< Active arm backend name
+    bool arm_backend_healthy = false;       ///< Active arm backend health
+    uint64_t arm_backend_age_us = 0;        ///< Age of the last backend sample
 
     // Drift metrics (for zero-velocity validation)
     double xy_drift_error = 0.0;            ///< Euclidean XY drift from reference (meters)
     double yaw_drift_error = 0.0;           ///< Absolute yaw drift from reference (radians)
+    bool drift_metrics_valid = false;       ///< Whether xy/yaw drift metrics are physically meaningful
+    bool drift_raw_data_available = false;  ///< Whether raw zero-cmd snapshots are being recorded
+    uint64_t drift_raw_sample_count = 0;    ///< Raw drift snapshot count
+    std::string drift_window_summary;       ///< Human-readable raw drift summary
+
+    // Aggregated diagnostics
+    std::string system_health;              ///< Aggregated system health label
+    std::string system_summary;             ///< One-line human-readable summary
 
     // Safety indicators
     int clip_count = 0;                     ///< Number of safety clip events
@@ -66,14 +81,27 @@ struct DiagnosticMetrics
     {
         policy_latency_us = 0;
         policy_frequency_hz = 0.0;
+        policy_age_us = 0;
+        policy_seq = 0;
+        policy_fresh = false;
+        policy_from_fresh_sample = false;
         coordinator_jitter_us = 0;
         coordinator_frequency_hz = 0.0;
         body_state_age_us = 0;
         arm_state_age_us = 0;
         arm_tracking_error_norm = 0.0;
         arm_tracking_healthy = true;
+        arm_backend_name.clear();
+        arm_backend_healthy = false;
+        arm_backend_age_us = 0;
         xy_drift_error = 0.0;
         yaw_drift_error = 0.0;
+        drift_metrics_valid = false;
+        drift_raw_data_available = false;
+        drift_raw_sample_count = 0;
+        drift_window_summary.clear();
+        system_health.clear();
+        system_summary.clear();
         clip_count = 0;
         seq_gap_count = 0;
         current_mode.clear();
@@ -90,10 +118,12 @@ struct DiagnosticMetrics
         constexpr uint64_t kMaxStateAgeUs = 500000;        // 500ms
         constexpr uint64_t kMaxPolicyLatencyUs = 50000;    // 50ms
         constexpr double kMaxTrackingError = 0.5;          // radians
+        const uint64_t effective_policy_age_us =
+            policy_age_us > 0 ? policy_age_us : policy_latency_us;
 
         return (body_state_age_us > kMaxStateAgeUs) ||
                (arm_state_age_us > kMaxStateAgeUs) ||
-               (policy_latency_us > kMaxPolicyLatencyUs) ||
+               (effective_policy_age_us > kMaxPolicyLatencyUs) ||
                !arm_tracking_healthy ||
                (arm_tracking_error_norm > kMaxTrackingError);
     }

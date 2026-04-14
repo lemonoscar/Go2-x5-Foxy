@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <cmath>
 #include <iostream>
 
 #include "rl_sar/runtime/coordinator/go2_x5_coordinator.hpp"
@@ -24,11 +25,21 @@ void Require(bool condition, const char* message)
     }
 }
 
+void RequireNear(float actual, float expected, float epsilon, const char* message)
+{
+    if (std::fabs(actual - expected) > epsilon)
+    {
+        std::cerr << message << " actual=" << actual << " expected=" << expected << '\n';
+        std::abort();
+    }
+}
+
 Config MakeConfig()
 {
     Config config;
     config.body_command_expire_ns = 20'000'000ULL;
     config.arm_command_expire_ns = 15'000'000ULL;
+    config.policy_fresh_threshold_ns = 100'000'000ULL;
     for (size_t i = 0; i < rl_sar::protocol::kBodyJointCount; ++i)
     {
         config.default_leg_q[i] = 0.1f * static_cast<float>(i + 1);
@@ -59,6 +70,7 @@ DogPolicyCommandFrame MakePolicyCommand(uint64_t now_ns)
     DogPolicyCommandFrame frame;
     frame.header.seq = 20;
     frame.header.source_monotonic_ns = now_ns;
+    frame.header.publish_monotonic_ns = now_ns;
     frame.action_dim = rl_sar::protocol::kDogJointCount;
     for (size_t i = 0; i < rl_sar::protocol::kDogJointCount; ++i)
     {
@@ -110,6 +122,24 @@ void TestReadyOnlyAllowsArm()
     Require(output.arm_passthrough_applied, "READY should mark arm passthrough applied");
 }
 
+void TestManualArmHoldsBodyAndPassesArm()
+{
+    HybridMotionCoordinator coordinator(MakeConfig());
+    Input input;
+    input.now_monotonic_ns = 5'500'000ULL;
+    input.mode = Mode::ManualArm;
+    input.has_body_state = true;
+    input.body_state = MakeBodyState();
+    input.has_arm_command = true;
+    input.arm_command = MakeArmCommand(input.now_monotonic_ns);
+
+    const auto output = coordinator.Step(input);
+    Require(output.body_command_valid, "MANUAL_ARM should emit safe stand body command");
+    Require(output.body_hold, "MANUAL_ARM should mark body hold");
+    Require(output.arm_command_valid, "MANUAL_ARM should allow arm passthrough");
+    Require(output.arm_passthrough_applied, "MANUAL_ARM should mark arm passthrough applied");
+}
+
 void TestRlActiveDecodesDogOnlyBody()
 {
     HybridMotionCoordinator coordinator(MakeConfig());
@@ -127,8 +157,15 @@ void TestRlActiveDecodesDogOnlyBody()
     Require(output.body_command_valid, "RL active should emit body command");
     Require(output.policy_applied, "RL active should mark policy applied");
     Require(output.arm_command_valid, "RL active should allow arm passthrough when healthy");
+    Require(
+        (output.body_command.header.validity_flags & rl_sar::protocol::kValidityFallbackGenerated) == 0u,
+        "RL active policy body command must not be marked as fallback");
     Require(output.body_command.q[0] > 0.0f, "body target q should be decoded from policy");
     Require(output.body_command.kp[0] == 20.0f, "body kp should come from coordinator config");
+    Require(output.policy_is_fresh, "fresh policy sample should be marked fresh");
+    Require(output.current_cmd_from_fresh_sample, "new policy sample should be marked as fresh sample");
+    Require(output.policy_seq == 20, "policy sequence should propagate");
+    Require(output.policy_age_ns == 0, "fresh policy age should be zero at receive time");
 }
 
 void TestExpiredArmCommandRejected()
@@ -162,6 +199,67 @@ void TestDegradedArmForcesHold()
     Require(output.arm_command_valid, "DEGRADED_ARM should emit arm hold command");
     Require(output.arm_hold, "DEGRADED_ARM should mark arm hold");
     Require(output.arm_command.q[0] == input.arm_state.q[0], "arm hold should latch current arm pose");
+    RequireNear(output.body_command.q[0], input.body_state.leg_q[0], 1e-5f,
+                "first degraded command should start from current pose");
+}
+
+void TestPolicyFreshnessTracksHeldSample()
+{
+    HybridMotionCoordinator coordinator(MakeConfig());
+    Input seed;
+    seed.now_monotonic_ns = 10'000'000ULL;
+    seed.mode = Mode::RlDogOnlyActive;
+    seed.has_body_state = true;
+    seed.body_state = MakeBodyState();
+    seed.has_policy_command = true;
+    seed.dog_policy_command = MakePolicyCommand(seed.now_monotonic_ns);
+
+    const auto first = coordinator.Step(seed);
+    Require(first.policy_applied, "first policy step should apply policy");
+    Require(first.policy_is_fresh, "first policy sample should be fresh");
+    Require(first.current_cmd_from_fresh_sample, "first policy step should mark fresh sample");
+
+    Input held = seed;
+    held.now_monotonic_ns += 20'000'000ULL;
+    const auto second = coordinator.Step(held);
+    Require(second.policy_applied, "held policy sample should still drive body command");
+    Require(second.policy_is_fresh, "held sample should still be fresh inside threshold");
+    Require(!second.current_cmd_from_fresh_sample, "held sample should not be marked as newly received");
+    Require(second.policy_age_ns == 20'000'000ULL, "held sample age should accumulate");
+
+    held.now_monotonic_ns += 120'000'000ULL;
+    const auto stale = coordinator.Step(held);
+    Require(stale.policy_applied, "stale policy sample should still be exposed");
+    Require(!stale.policy_is_fresh, "held sample should become stale past threshold");
+    Require(!stale.current_cmd_from_fresh_sample, "stale held sample remains non-fresh");
+    Require(stale.policy_seq == 20, "policy sequence should remain stable while holding");
+}
+
+void TestDegradedBodyUsesSmoothedFallback()
+{
+    HybridMotionCoordinator coordinator(MakeConfig());
+    Input input;
+    input.now_monotonic_ns = 50'000'000ULL;
+    input.mode = Mode::DegradedBody;
+    input.has_body_state = true;
+    input.body_state = MakeBodyState();
+
+    const auto start = coordinator.Step(input);
+    Require(start.body_command_valid, "degraded body should emit fallback body command");
+    RequireNear(start.body_command.q[0], input.body_state.leg_q[0], 1e-5f,
+                "fallback trajectory should start from current pose");
+
+    input.now_monotonic_ns += 100'000'000ULL;
+    const auto mid = coordinator.Step(input);
+    Require(mid.body_command.q[0] > input.body_state.leg_q[0],
+            "fallback trajectory should move away from the current pose");
+    Require(mid.body_command.q[0] < coordinator.config().safe_stand_q[0],
+            "fallback trajectory should not jump to the target immediately");
+
+    input.now_monotonic_ns += 500'000'000ULL;
+    const auto done = coordinator.Step(input);
+    RequireNear(done.body_command.q[0], coordinator.config().safe_stand_q[0], 1e-4f,
+                "fallback trajectory should converge to safe stand");
 }
 
 }  // namespace
@@ -169,9 +267,12 @@ void TestDegradedArmForcesHold()
 int main()
 {
     TestReadyOnlyAllowsArm();
+    TestManualArmHoldsBodyAndPassesArm();
     TestRlActiveDecodesDogOnlyBody();
     TestExpiredArmCommandRejected();
     TestDegradedArmForcesHold();
+    TestPolicyFreshnessTracksHeldSample();
+    TestDegradedBodyUsesSmoothedFallback();
     std::cout << "test_go2_x5_coordinator_contract passed\n";
     return 0;
 }

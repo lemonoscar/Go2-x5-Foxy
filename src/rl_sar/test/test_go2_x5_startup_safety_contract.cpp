@@ -105,13 +105,16 @@ int main()
 
     const std::string state_io_content = ReadAll(state_io_file.string());
     RequireContains(state_io_content, "const auto supervisor_mode = this->GetSupervisorModeSnapshot();", state_io_file.string());
-    RequireContains(state_io_content, "const bool allow_passthrough = allow_arm_actuation;", state_io_file.string());
     RequireContains(state_io_content, "const bool allow_arm_actuation =", state_io_file.string());
+    RequireContains(
+        state_io_content,
+        "this->arm_safe_shutdown_active.load() || this->ShouldActuateArmForMode(supervisor_mode);",
+        state_io_file.string());
     RequireContains(state_io_content, "Arm command suppressed in supervisor mode", state_io_file.string());
-    RequireContains(state_io_content, "Waiting for ManualArm or RlDogOnlyActive.", state_io_file.string());
+    RequireContains(state_io_content, "Waiting for Ready, ManualArm, or RlDogOnlyActive.", state_io_file.string());
     RequireNotContains(
         state_io_content,
-        "const bool allow_passthrough = in_rl_locomotion || this->arm_safe_shutdown_active.load();",
+        "const bool allow_passthrough =",
         state_io_file.string());
 
     const std::string ros_content = ReadAll(ros_file.string());

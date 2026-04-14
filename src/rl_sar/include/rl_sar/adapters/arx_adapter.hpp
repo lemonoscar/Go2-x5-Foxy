@@ -4,12 +4,18 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 
 #include "rl_sar/protocol/go2_x5_protocol_types.hpp"
+
+namespace rl_sar::adapters::arx
+{
+class IArxBackend;
+}
 
 namespace rl_sar::adapters
 {
@@ -34,11 +40,24 @@ namespace rl_sar::adapters
 class ArxAdapter
 {
 public:
+    enum class BackendType : uint8_t
+    {
+        None = 0,
+        InProcessSdk = 1,
+        Bridge = 2,
+    };
+
     /**
      * @brief Configuration for the ARX adapter
      */
     struct Config
     {
+        /// Preferred backend at startup
+        BackendType preferred_backend = BackendType::InProcessSdk;
+
+        /// Allow fallback to the external bridge transport when SDK backend is unavailable
+        bool allow_fallback_to_bridge = true;
+
         /// CAN interface name (e.g., "can0")
         std::string can_interface = "can0";
 
@@ -80,6 +99,15 @@ public:
 
         /// Initialize to home position
         bool init_to_home = false;
+
+        /// External bridge host (typed IPC / UDP)
+        std::string bridge_host = "127.0.0.1";
+
+        /// External bridge command port
+        int bridge_command_port = 45671;
+
+        /// External bridge state port
+        int bridge_state_port = 45672;
     };
 
     /**
@@ -96,6 +124,9 @@ public:
         double avg_state_latency_us = 0.0;
         double current_tracking_error = 0.0;
         bool backend_healthy = false;
+        BackendType active_backend = BackendType::None;
+        std::string backend_name;
+        uint64_t backend_age_us = 0;
     };
 
     /**
@@ -209,6 +240,10 @@ public:
      */
     const Config& GetConfig() const { return config_; }
 
+    BackendType GetActiveBackend() const;
+
+    std::string GetBackendName() const;
+
 private:
     /**
      * @brief Internal state representation
@@ -247,11 +282,8 @@ private:
     };
 
     // Initialization helpers
-    bool LoadArxSdk(std::string* error);
-    bool InitializeCanInterface(std::string* error);
     bool InitializeBackend(std::string* error);
     bool VerifyInitialState(std::string* error);
-    void UnloadArxSdk();
 
     // Servo loop
     void ServoLoop();
@@ -287,28 +319,11 @@ private:
     InternalCommand pending_command_;
     InternalCommand active_command_;
 
-    // ARX SDK handle (opaque pointer for ABI stability)
-    void* arx_sdk_handle_ = nullptr;
-    void* arx_solver_handle_ = nullptr;
-
-    // ARX backend interface pointers (function pointers from SDK)
-    struct ArxVTable
-    {
-        bool (*create)(const char* model, const char* interface, int background_mode, double dt);
-        void (*destroy)();
-        bool (*send_command)(const float* q, const float* dq, const float* kp, const float* kd, const float* tau, int n);
-        bool (*recv_state)(float* q, float* dq, float* tau, int n);
-        bool (*set_gain)(const float* kp, const float* kd, int n);
-        bool (*reset_to_home)();
-        bool (*is_healthy)();
-        void (*stop)();
-    };
-    ArxVTable arx_vtable_{};
-
     // Initialization state
-    bool can_initialized_ = false;
     bool backend_initialized_ = false;
     bool require_live_state_failed_ = false;
+    BackendType active_backend_ = BackendType::None;
+    std::unique_ptr<arx::IArxBackend> backend_;
 };
 
 }  // namespace rl_sar::adapters

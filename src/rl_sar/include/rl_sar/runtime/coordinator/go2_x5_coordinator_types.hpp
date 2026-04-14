@@ -6,6 +6,7 @@
 
 #include "rl_sar/protocol/go2_x5_protocol.hpp"
 #include "rl_sar/runtime/supervisor/go2_x5_supervisor_types.hpp"
+#include "rl_sar/trajectory/fallback_smoother.hpp"
 
 namespace rl_sar::runtime::coordinator
 {
@@ -14,12 +15,14 @@ struct Config
 {
     uint64_t body_command_expire_ns = 15'000'000ULL;
     uint64_t arm_command_expire_ns = 15'000'000ULL;
+    uint64_t policy_fresh_threshold_ns = 100'000'000ULL;
     std::array<float, protocol::kBodyJointCount> default_leg_q{};
     std::array<float, protocol::kBodyJointCount> action_scale{};
     std::array<float, protocol::kBodyJointCount> rl_kp{};
     std::array<float, protocol::kBodyJointCount> rl_kd{};
     std::array<float, protocol::kBodyJointCount> torque_limits{};
     std::array<float, protocol::kBodyJointCount> safe_stand_q{};
+    trajectory::FallbackSmootherConfig fallback_smoother{};
 };
 
 struct Input
@@ -56,6 +59,10 @@ struct Output
     bool arm_hold = false;
     bool policy_applied = false;
     bool arm_passthrough_applied = false;
+    bool policy_is_fresh = false;
+    bool current_cmd_from_fresh_sample = false;
+    uint64_t policy_age_ns = 0;
+    uint64_t policy_seq = 0;
 };
 
 }  // namespace rl_sar::runtime::coordinator

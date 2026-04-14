@@ -8,6 +8,8 @@
 #include <memory>
 #include <fstream>
 
+#include "rl_sar/logger/event_types.hpp"
+
 namespace rl_sar::logger
 {
 
@@ -207,6 +209,12 @@ public:
     void LogEvent(const EventLogEntry& event);
 
     /**
+     * @brief Log a structured runtime event using the unified stage-2 model
+     * @param event Structured event
+     */
+    void Log(const Event& event);
+
+    /**
      * @brief Get all events from in-memory buffer
      * @return Copy of all stored events
      */
@@ -238,6 +246,11 @@ public:
      * @return Events with timestamp >= timestamp_ns
      */
     std::vector<EventLogEntry> GetEventsSince(uint64_t timestamp_ns) const;
+
+    std::vector<Event> GetRecentEvents(size_t count = 10) const;
+    std::vector<Event> GetEventsByCategory(EventCategory category) const;
+    std::vector<Event> GetEventsBySeverity(EventSeverity min_severity) const;
+    std::string GenerateSummary() const;
 
     /**
      * @brief Clear the in-memory event buffer
@@ -303,6 +316,8 @@ private:
     std::string FormatEvent(const EventLogEntry& event) const;
     std::string FormatJson(const EventLogEntry& event) const;
     std::string EscapeJsonString(const std::string& str) const;
+    Event ToStructuredEvent(const EventLogEntry& event) const;
+    EventLogEntry FromStructuredEvent(const Event& event) const;
     uint64_t GetTimestampNs() const;
 };
 

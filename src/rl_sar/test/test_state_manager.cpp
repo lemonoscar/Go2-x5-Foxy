@@ -287,40 +287,7 @@ int main() {
         }
     }
 
-    // Test 13: ControlCommand
-    {
-        test_count++;
-        StateManager manager(18, 6);
-        manager.SetControlCommand(0.5f, 0.3f, 0.1f);
-
-        auto cmd = manager.GetControlCommand();
-
-        if (cmd.x == 0.5f && cmd.y == 0.3f && cmd.yaw == 0.1f) {
-            passed++;
-            std::cout << "✓ ControlCommand\n";
-        } else {
-            std::cerr << "✗ ControlCommand\n";
-        }
-    }
-
-    // Test 14: NavigationMode
-    {
-        test_count++;
-        StateManager manager(18, 6);
-
-        bool not_nav = !manager.IsNavigationMode();
-        manager.SetNavigationMode(true);
-        bool is_nav = manager.IsNavigationMode();
-
-        if (not_nav && is_nav) {
-            passed++;
-            std::cout << "✓ NavigationMode\n";
-        } else {
-            std::cerr << "✗ NavigationMode\n";
-        }
-    }
-
-    // Test 15: CaptureSnapshot
+    // Test 13: CaptureSnapshot
     {
         test_count++;
         StateManager manager(18, 6);
@@ -351,7 +318,7 @@ int main() {
         }
     }
 
-    // Test 16: RestoreFromSnapshot
+    // Test 14: RestoreFromSnapshot
     {
         test_count++;
         StateManager manager(18, 6);
@@ -360,23 +327,17 @@ int main() {
         snapshot.arm_hold_enabled = false;
         snapshot.arm_lock = true;
         snapshot.arm_hold_position = {0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f};
-        snapshot.cmd_vel_x = 0.5f;
-        snapshot.cmd_vel_y = 0.3f;
-        snapshot.cmd_vel_yaw = 0.1f;
-        snapshot.navigation_mode = true;
 
         manager.RestoreFromSnapshot(snapshot);
 
         auto pos = manager.GetArmHoldPosition();
-        auto cmd = manager.GetControlCommand();
 
         bool pos_match = (pos.size() == snapshot.arm_hold_position.size());
         for (size_t i = 0; i < snapshot.arm_hold_position.size() && pos_match; ++i) {
             if (pos[i] != snapshot.arm_hold_position[i]) pos_match = false;
         }
 
-        if (pos_match && cmd.x == 0.5f && cmd.y == 0.3f && cmd.yaw == 0.1f &&
-            manager.IsNavigationMode()) {
+        if (pos_match) {
             passed++;
             std::cout << "✓ RestoreFromSnapshot\n";
         } else {
@@ -384,7 +345,7 @@ int main() {
         }
     }
 
-    // Test 17: ResetClearsAllState
+    // Test 15: ResetClearsAllState
     {
         test_count++;
         StateManager manager(18, 6);
@@ -393,8 +354,6 @@ int main() {
         manager.SetInRLLocomotion(true);
         manager.SetArmHoldEnabled(false);
         manager.SetArmLock(true);
-        manager.SetControlCommand(0.5f, 0.3f, 0.1f);
-        manager.SetNavigationMode(true);
 
         manager.Reset();
 
@@ -403,22 +362,14 @@ int main() {
             manager.IsArmHoldEnabled() &&
             !manager.IsArmLock() &&
             !manager.IsSafeShutdownActive()) {
-
-            auto cmd = manager.GetControlCommand();
-
-            if (cmd.x == 0.0f && cmd.y == 0.0f && cmd.yaw == 0.0f &&
-                !manager.IsNavigationMode()) {
-                passed++;
-                std::cout << "✓ ResetClearsAllState\n";
-            } else {
-                std::cerr << "✗ ResetClearsAllState\n";
-            }
+            passed++;
+            std::cout << "✓ ResetClearsAllState\n";
         } else {
             std::cerr << "✗ ResetClearsAllState\n";
         }
     }
 
-    // Test 18: ResetArmCommandState
+    // Test 16: ResetArmCommandState
     {
         test_count++;
         StateManager manager(18, 6);
@@ -443,7 +394,7 @@ int main() {
         }
     }
 
-    // Test 19: ResetArmBridgeState
+    // Test 17: ResetArmBridgeState
     {
         test_count++;
         StateManager manager(18, 6);
@@ -465,7 +416,7 @@ int main() {
         }
     }
 
-    // Test 20: ArmCommandIgnoresWrongSize
+    // Test 18: ArmCommandIgnoresWrongSize
     {
         test_count++;
         StateManager manager(18, 6);

@@ -542,6 +542,62 @@ bool TestCustomEvent()
     return true;
 }
 
+bool TestStructuredEventQueries()
+{
+    std::cout << "Testing structured event queries... ";
+
+    EventLogger logger;
+    EventLoggerConfig config;
+    config.enable_console_logging = false;
+    logger.Initialize(config);
+
+    Event event;
+    event.category = EventCategory::Policy;
+    event.severity = EventSeverity::Warning;
+    event.source = "coordinator";
+    event.message = "Policy stale detected";
+    event.policy_stale = true;
+    event.policy_age_ns = 42000000ULL;
+    logger.Log(event);
+
+    const auto policy_events = logger.GetEventsByCategory(EventCategory::Policy);
+    if (!ExpectEq(policy_events.size(), 1u, "policy event count")) { return false; }
+    if (!ExpectTrue(policy_events.front().policy_stale, "policy stale")) { return false; }
+    if (!ExpectEq(policy_events.front().policy_age_ns, 42000000u, "policy age")) { return false; }
+
+    const auto warning_events = logger.GetEventsBySeverity(EventSeverity::Warning);
+    if (!ExpectTrue(!warning_events.empty(), "warning events not empty")) { return false; }
+
+    std::cout << "PASS\n";
+    return true;
+}
+
+bool TestStructuredSummary()
+{
+    std::cout << "Testing structured event summary... ";
+
+    EventLogger logger;
+    EventLoggerConfig config;
+    config.enable_console_logging = false;
+    logger.Initialize(config);
+
+    Event event;
+    event.category = EventCategory::Arm;
+    event.severity = EventSeverity::Error;
+    event.source = "arm_adapter";
+    event.message = "Arm tracking error elevated";
+    event.arm_tracking_error = true;
+    event.arm_tracking_error_value = 0.12;
+    logger.Log(event);
+
+    const std::string summary = logger.GenerateSummary();
+    if (!ExpectTrue(summary.find("arm_adapter") != std::string::npos, "summary source")) { return false; }
+    if (!ExpectTrue(summary.find("Arm tracking error elevated") != std::string::npos, "summary message")) { return false; }
+
+    std::cout << "PASS\n";
+    return true;
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
@@ -568,6 +624,8 @@ int main(int argc, char** argv)
     all_passed &= TestConcurrentLogging();
     all_passed &= TestJsonStringEscape();
     all_passed &= TestCustomEvent();
+    all_passed &= TestStructuredEventQueries();
+    all_passed &= TestStructuredSummary();
 
     std::cout << "\n=== " << (all_passed ? "ALL TESTS PASSED" : "SOME TESTS FAILED")
               << " ===\n";

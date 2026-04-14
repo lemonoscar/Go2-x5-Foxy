@@ -40,6 +40,8 @@ struct DriftSnapshot
     // Computed drift
     double xy_drift;             ///< Euclidean distance from reference (meters)
     double yaw_drift;            ///< Absolute angular difference from reference (radians)
+    bool xy_valid;               ///< True when XY drift is backed by a real planar estimate
+    bool yaw_valid;              ///< True when yaw drift is backed by IMU/quaternion data
 
     // Arm context
     std::array<double, 6> arm_joint_pos;    ///< Current arm joint positions (rad)
@@ -265,9 +267,23 @@ private:
         double x = 0.0;
         double y = 0.0;
         double yaw = 0.0;
+        bool xy_valid = false;
+        bool yaw_valid = false;
         bool valid = false;
     };
     ReferenceState reference_state_;
+
+    struct PoseEstimateState
+    {
+        double x = 0.0;
+        double y = 0.0;
+        double yaw = 0.0;
+        uint64_t timestamp_ns = 0;
+        bool xy_valid = false;
+        bool yaw_valid = false;
+        bool initialized = false;
+    };
+    PoseEstimateState pose_state_;
 
     // Snapshot buffer (thread-safe circular buffer)
     mutable std::mutex snapshots_mutex_;
@@ -275,7 +291,8 @@ private:
 
     // Helper methods
     bool IsZeroCommand(const CommandContext& cmd_ctx) const;
-    void UpdateReferenceState(const protocol::BodyStateFrame& body_state);
+    void UpdatePoseEstimate(const protocol::BodyStateFrame& body_state);
+    void UpdateReferenceState();
     DriftSnapshot CreateSnapshot(const protocol::BodyStateFrame& body_state,
                                  const protocol::ArmStateFrame& arm_state,
                                  const CommandContext& cmd_ctx) const;

@@ -77,11 +77,6 @@ struct RobotState
 
 namespace Input
 {
-    // Recommend: Num0-GetUp Num9-GetDown N-ToggleNavMode
-    //            R-SimReset Enter-SimToggle
-    //            M-MotorEnable K-MotorDisable P-MotorPassive
-    //            Num1-BaseLocomotion Num2-Num8-Skills(7)
-    //            WS-AxisX AD-AxisY QE-AxisYaw Space-AxisClear
     enum class Keyboard
     {
         None = 0,
@@ -92,11 +87,6 @@ namespace Input
         Up, Down, Left, Right
     };
 
-    // Recommend: A-GetUp B-GetDown X-ToggleNavMode Y-None
-    //            RB_Y-SimReset RB_X-SimToggle
-    //            LB_A-MotorEnable LB_B-MotorDisable LB_X-MotorPassive
-    //            RB_DPadUp-BaseLocomotion RB_DPadOthers/LB_DPadOthers-Skills(7)
-    //            LY-AxisX LX-AxisY RX-AxisYaw
     enum class Gamepad
     {
         None = 0,
@@ -115,9 +105,6 @@ struct Control
     float x = 0.0f;
     float y = 0.0f;
     float yaw = 0.0f;
-    bool navigation_mode = false;
-    bool nav_keyboard_latched = false;
-    bool nav_gamepad_latched = false;
 
     void SetKeyboard(Input::Keyboard keyboad)
     {

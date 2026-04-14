@@ -303,32 +303,6 @@ std::chrono::steady_clock::time_point StateManager::GetArmBridgeStateStamp() con
 }
 
 // ============================================================================
-// Control State Access
-// ============================================================================
-
-StateManager::ControlCommand StateManager::GetControlCommand() const {
-    std::lock_guard<std::mutex> lock(state_.control_mutex);
-    return {state_.cmd_vel_x, state_.cmd_vel_y, state_.cmd_vel_yaw};
-}
-
-void StateManager::SetControlCommand(float x, float y, float yaw) {
-    std::lock_guard<std::mutex> lock(state_.control_mutex);
-    state_.cmd_vel_x = x;
-    state_.cmd_vel_y = y;
-    state_.cmd_vel_yaw = yaw;
-}
-
-bool StateManager::IsNavigationMode() const {
-    std::lock_guard<std::mutex> lock(state_.control_mutex);
-    return state_.navigation_mode;
-}
-
-void StateManager::SetNavigationMode(bool enabled) {
-    std::lock_guard<std::mutex> lock(state_.control_mutex);
-    state_.navigation_mode = enabled;
-}
-
-// ============================================================================
 // Snapshot Operations
 // ============================================================================
 
@@ -371,15 +345,6 @@ StateSnapshot StateManager::CaptureSnapshot() const {
         snapshot.arm_bridge_state_from_backend = state_.arm_bridge_state_from_backend;
     }
 
-    // Control state
-    {
-        std::lock_guard<std::mutex> lock(state_.control_mutex);
-        snapshot.cmd_vel_x = state_.cmd_vel_x;
-        snapshot.cmd_vel_y = state_.cmd_vel_y;
-        snapshot.cmd_vel_yaw = state_.cmd_vel_yaw;
-        snapshot.navigation_mode = state_.navigation_mode;
-    }
-
     return snapshot;
 }
 
@@ -416,14 +381,6 @@ void StateManager::RestoreFromSnapshot(const StateSnapshot& snapshot) {
         state_.arm_bridge_state_from_backend = snapshot.arm_bridge_state_from_backend;
     }
 
-    // Control state
-    {
-        std::lock_guard<std::mutex> lock(state_.control_mutex);
-        state_.cmd_vel_x = snapshot.cmd_vel_x;
-        state_.cmd_vel_y = snapshot.cmd_vel_y;
-        state_.cmd_vel_yaw = snapshot.cmd_vel_yaw;
-        state_.navigation_mode = snapshot.navigation_mode;
-    }
 }
 
 // ============================================================================
@@ -440,8 +397,6 @@ void StateManager::Reset() {
     SetArmLock(false);
     SetSafeShutdownActive(false);
 
-    SetControlCommand(0.0f, 0.0f, 0.0f);
-    SetNavigationMode(false);
 }
 
 void StateManager::ResetArmCommandState() {

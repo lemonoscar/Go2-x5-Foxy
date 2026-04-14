@@ -10,6 +10,56 @@
 namespace rl_sar::logger
 {
 
+namespace
+{
+
+int SeverityRank(const EventSeverity severity)
+{
+    switch (severity)
+    {
+        case EventSeverity::Info: return 0;
+        case EventSeverity::Warning: return 1;
+        case EventSeverity::Error: return 2;
+        case EventSeverity::Critical: return 3;
+    }
+    return 0;
+}
+
+ModeType ModeFromString(const std::string& mode)
+{
+    if (mode == "BOOT") return ModeType::BOOT;
+    if (mode == "PROBE") return ModeType::PROBE;
+    if (mode == "PASSIVE") return ModeType::PASSIVE;
+    if (mode == "READY") return ModeType::READY;
+    if (mode == "RL_DOG_ONLY_ACTIVE") return ModeType::RL_DOG_ONLY_ACTIVE;
+    if (mode == "MANUAL_ARM") return ModeType::MANUAL_ARM;
+    if (mode == "DEGRADED_ARM") return ModeType::DEGRADED_ARM;
+    if (mode == "DEGRADED_BODY") return ModeType::DEGRADED_BODY;
+    if (mode == "SOFT_STOP") return ModeType::SOFT_STOP;
+    if (mode == "FAULT_LATCHED") return ModeType::FAULT_LATCHED;
+    return ModeType::BOOT;
+}
+
+FaultType FaultTypeFromStructuredEvent(const Event& event)
+{
+    switch (event.category)
+    {
+        case EventCategory::Policy:
+            return FaultType::POLICY_STALE;
+        case EventCategory::Arm:
+            return event.arm_tracking_error ? FaultType::ARM_TRACKING_ERROR : FaultType::ARM_STATE_STALE;
+        case EventCategory::Body:
+            return FaultType::BODY_STATE_STALE;
+        case EventCategory::System:
+            return FaultType::UNKNOWN;
+        case EventCategory::ModeChange:
+            return FaultType::UNKNOWN;
+    }
+    return FaultType::UNKNOWN;
+}
+
+}  // namespace
+
 // PIMPL implementation details
 struct EventLogger::Impl
 {
@@ -54,6 +104,31 @@ const char* EventLogger::FaultToString(FaultType type)
         case FaultType::UNKNOWN:               return "UNKNOWN";
     }
     return "UNKNOWN";
+}
+
+const char* ToString(const EventCategory category)
+{
+    switch (category)
+    {
+        case EventCategory::ModeChange: return "ModeChange";
+        case EventCategory::Policy: return "Policy";
+        case EventCategory::Arm: return "Arm";
+        case EventCategory::Body: return "Body";
+        case EventCategory::System: return "System";
+    }
+    return "System";
+}
+
+const char* ToString(const EventSeverity severity)
+{
+    switch (severity)
+    {
+        case EventSeverity::Info: return "Info";
+        case EventSeverity::Warning: return "Warning";
+        case EventSeverity::Error: return "Error";
+        case EventSeverity::Critical: return "Critical";
+    }
+    return "Info";
 }
 
 // ============================================================================
@@ -310,6 +385,11 @@ void EventLogger::LogEvent(const EventLogEntry& event)
     }
 }
 
+void EventLogger::Log(const Event& event)
+{
+    LogEvent(FromStructuredEvent(event));
+}
+
 // ============================================================================
 // Event retrieval
 // ============================================================================
@@ -390,6 +470,70 @@ std::vector<EventLogEntry> EventLogger::GetEventsSince(uint64_t timestamp_ns) co
     }
 
     return result;
+}
+
+std::vector<Event> EventLogger::GetRecentEvents(const size_t count) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    std::vector<Event> result;
+    const size_t begin = impl_->event_buffer.size() > count ? impl_->event_buffer.size() - count : 0;
+    result.reserve(impl_->event_buffer.size() - begin);
+    for (size_t i = begin; i < impl_->event_buffer.size(); ++i)
+    {
+        result.push_back(ToStructuredEvent(impl_->event_buffer[i]));
+    }
+    return result;
+}
+
+std::vector<Event> EventLogger::GetEventsByCategory(const EventCategory category) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    std::vector<Event> result;
+    for (const auto& entry : impl_->event_buffer)
+    {
+        Event event = ToStructuredEvent(entry);
+        if (event.category == category)
+        {
+            result.push_back(std::move(event));
+        }
+    }
+    return result;
+}
+
+std::vector<Event> EventLogger::GetEventsBySeverity(const EventSeverity min_severity) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    std::vector<Event> result;
+    for (const auto& entry : impl_->event_buffer)
+    {
+        Event event = ToStructuredEvent(entry);
+        if (SeverityRank(event.severity) >= SeverityRank(min_severity))
+        {
+            result.push_back(std::move(event));
+        }
+    }
+    return result;
+}
+
+std::string EventLogger::GenerateSummary() const
+{
+    const auto recent_events = GetRecentEvents(5);
+    std::ostringstream oss;
+    bool first = true;
+    for (const auto& event : recent_events)
+    {
+        if (!first)
+        {
+            oss << " | ";
+        }
+        oss << '[' << ToString(event.severity) << "] "
+            << event.source << ": " << event.message;
+        first = false;
+    }
+    return oss.str();
 }
 
 void EventLogger::Clear()
@@ -599,6 +743,96 @@ std::string EventLogger::EscapeJsonString(const std::string& str) const
     }
 
     return result;
+}
+
+Event EventLogger::ToStructuredEvent(const EventLogEntry& entry) const
+{
+    Event event;
+    event.timestamp_ns = entry.timestamp_ns;
+    event.source = entry.source.empty() ? "supervisor" : entry.source;
+    event.arm_tracking_error_value = entry.arm_tracking_error;
+
+    if (entry.is_fault)
+    {
+        switch (entry.fault_type)
+        {
+            case FaultType::POLICY_STALE:
+                event.category = EventCategory::Policy;
+                event.policy_stale = true;
+                event.policy_age_ns = entry.detail_value;
+                break;
+            case FaultType::ARM_TRACKING_ERROR:
+            case FaultType::ARM_STATE_STALE:
+            case FaultType::CAN_FAILURE:
+                event.category = EventCategory::Arm;
+                event.arm_tracking_error = entry.fault_type == FaultType::ARM_TRACKING_ERROR;
+                break;
+            case FaultType::BODY_STATE_STALE:
+                event.category = EventCategory::Body;
+                break;
+            case FaultType::DDS_FAILURE:
+            case FaultType::SAFETY_LIMIT_EXCEEDED:
+            case FaultType::UNKNOWN:
+            default:
+                event.category = EventCategory::System;
+                break;
+        }
+        event.severity =
+            entry.to_mode == ModeType::FAULT_LATCHED ? EventSeverity::Critical : EventSeverity::Error;
+        event.message = entry.fault_details.empty() ? FaultToString(entry.fault_type) : entry.fault_details;
+        event.reason_code = FaultToString(entry.fault_type);
+    }
+    else
+    {
+        event.category = EventCategory::ModeChange;
+        event.severity =
+            entry.to_mode == ModeType::FAULT_LATCHED ? EventSeverity::Critical : EventSeverity::Info;
+        event.message = entry.reason;
+        event.from_mode = ModeToString(entry.from_mode);
+        event.to_mode = ModeToString(entry.to_mode);
+        event.reason_code = entry.reason;
+    }
+
+    return event;
+}
+
+EventLogEntry EventLogger::FromStructuredEvent(const Event& event) const
+{
+    EventLogEntry entry;
+    entry.timestamp_ns = event.timestamp_ns;
+    entry.source = event.source;
+    entry.reason = event.message;
+    entry.fault_details = event.message;
+    entry.detail_value = event.policy_age_ns;
+    entry.arm_tracking_error = event.arm_tracking_error_value;
+
+    if (event.category == EventCategory::ModeChange)
+    {
+        entry.is_fault = false;
+        entry.from_mode = ModeFromString(event.from_mode);
+        entry.to_mode = ModeFromString(event.to_mode);
+        entry.reason = event.reason_code.empty() ? event.message : event.reason_code;
+    }
+    else
+    {
+        entry.is_fault = true;
+        entry.from_mode = ModeType::BOOT;
+        entry.to_mode =
+            event.severity == EventSeverity::Critical ? ModeType::FAULT_LATCHED : ModeType::BOOT;
+        entry.fault_type = FaultTypeFromStructuredEvent(event);
+        entry.fault_details = event.message;
+        if (event.policy_stale)
+        {
+            entry.fault_type = FaultType::POLICY_STALE;
+            entry.detail_value = event.policy_age_ns;
+        }
+        if (event.arm_tracking_error)
+        {
+            entry.fault_type = FaultType::ARM_TRACKING_ERROR;
+        }
+    }
+
+    return entry;
 }
 
 uint64_t EventLogger::GetTimestampNs() const
