@@ -800,6 +800,29 @@ if(USE_CMAKE AND BUILD_TESTING)
     target_include_directories(test_event_logger PRIVATE include)
     target_link_libraries(test_event_logger Threads::Threads)
     add_test(NAME test_event_logger COMMAND test_event_logger)
+
+    # ========================================================================
+    # Jetson Hardware Check Tests (安全模式 - 只检测，不控制)
+    # ========================================================================
+    # ⚠️ 安全承诺：这些测试只检测硬件接口，不发送任何控制命令
+    # 适用于Jetson安装在机器人身上的场景
+
+    message(STATUS "Adding Jetson hardware check tests (SAFE MODE)...")
+
+    # Hardware interface detection (read-only, no control)
+    add_executable(test_hardware_interfaces
+        test/hardware/test_hardware_interfaces.cpp)
+    target_link_libraries(test_hardware_interfaces ${CMAKE_DL_LIBS})
+
+    # Observation snapshot generator (for training-deployment consistency)
+    add_executable(test_observation_snapshot
+        test/integration/test_observation_snapshot.cpp
+        src/rl_sar/observation/observation_builder.cpp)
+    target_include_directories(test_observation_snapshot PRIVATE include)
+    target_link_libraries(test_observation_snapshot Threads::Threads)
+
+    message(STATUS "Jetson hardware check tests: test_hardware_interfaces, test_observation_snapshot")
+    message(STATUS "  Safe mode: Detection only, NO control commands sent")
 endif()
 
 # add_executable(test_observation_buffer test/test_observation_buffer.cpp)

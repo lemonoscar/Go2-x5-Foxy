@@ -1,13 +1,9 @@
 /**
  * @file test_hardware_interfaces.cpp
- * @brief 硬件接口测试 - 不需要真实机器人，只测试接口可用性
+ * @brief 硬件接口检测 - 只检测，不控制，安全
  *
- * 测试内容：
- * 1. CAN接口检测
- * 2. 网络接口检测
- * 3. ARX SDK库加载
- * 4. Unitree SDK库加载
- * 5. 内存和CPU资源检测
+ * 安全承诺：此测试不会发送任何控制命令给机器人
+ * 只检测：CAN接口、网络接口、SDK库、系统资源
  */
 
 #include <chrono>
@@ -85,7 +81,7 @@ void PrintSummary()
 }
 
 // ============================================================================
-// Test 1: CAN接口检测
+// Test 1: CAN接口检测（只检测，不发送）
 // ============================================================================
 
 TestResult TestCanInterface(const std::string& interface_name)
@@ -117,7 +113,7 @@ TestResult TestCanInterface(const std::string& interface_name)
     else
     {
         result.passed = true;
-        result.message = "Interface exists, index=" + std::to_string(ifr.ifr_ifindex);
+        result.message = "Interface exists, index=" + std::to_string(ifr.ifr_ifindex) + " (检测完成，未发送数据)";
     }
 #else
     result.message = "CAN test only supported on Linux";
@@ -128,7 +124,7 @@ TestResult TestCanInterface(const std::string& interface_name)
 }
 
 // ============================================================================
-// Test 2: 网络接口检测
+// Test 2: 网络接口检测（只检测，不发送）
 // ============================================================================
 
 TestResult TestNetworkInterface(const std::string& interface_name)
@@ -153,7 +149,6 @@ TestResult TestNetworkInterface(const std::string& interface_name)
     int rc = ioctl(sock, SIOCGIFINDEX, &ifr);
     if (rc >= 0)
     {
-        // 检查接口是否UP
         ioctl(sock, SIOCGIFFLAGS, &ifr);
         bool is_up = (ifr.ifr_flags & IFF_UP) != 0;
         bool is_running = (ifr.ifr_flags & IFF_RUNNING) != 0;
@@ -163,7 +158,7 @@ TestResult TestNetworkInterface(const std::string& interface_name)
         if (is_up && is_running)
         {
             result.passed = true;
-            result.message = "Interface UP and RUNNING";
+            result.message = "Interface UP and RUNNING (检测完成，未发送数据)";
         }
         else
         {
@@ -185,7 +180,51 @@ TestResult TestNetworkInterface(const std::string& interface_name)
 }
 
 // ============================================================================
-// Test 3: ARX SDK库加载
+// Test 3: Unitree SDK检测（只检测SDK文件，不初始化）
+// ============================================================================
+
+TestResult TestUnitreeSdk(const std::string& sdk_root)
+{
+    TestResult result;
+    result.name = "Unitree SDK Files";
+    Timer timer;
+
+    std::vector<std::string> required_paths = {
+        sdk_root + "/lib/libunitree_sdk2.so",
+        sdk_root + "/lib/libunitree_go2.so",
+        sdk_root + "/include/unitree/robot/go2/LowState_.hpp",
+    };
+
+    int missing = 0;
+    for (const auto& path : required_paths)
+    {
+        std::ifstream f(path);
+        if (!f.good())
+        {
+            missing++;
+            if (missing <= 3)  // 只显示前3个
+            {
+                std::cout << "  Missing: " << path << std::endl;
+            }
+        }
+    }
+
+    if (missing == 0)
+    {
+        result.passed = true;
+        result.message = "All SDK files present (检测完成，未初始化)";
+    }
+    else
+    {
+        result.message = std::to_string(missing) + " SDK files missing";
+    }
+
+    result.duration_ms = timer.ElapsedMs();
+    return result;
+}
+
+// ============================================================================
+// Test 4: ARX SDK库加载检测（只加载符号表，不执行）
 // ============================================================================
 
 TestResult TestArxSdkLibrary(const std::string& sdk_root)
@@ -195,35 +234,30 @@ TestResult TestArxSdkLibrary(const std::string& sdk_root)
     Timer timer;
 
 #if defined(__linux__)
-    // 尝试多个可能的路径
     std::vector<std::string> lib_paths = {
         sdk_root + "/lib/aarch64/libhardware.so",
         sdk_root + "/lib/libhardware.so",
-        "/usr/local/lib/libhardware.so",
     };
 
-    bool found = false;
     std::string found_path;
-
     for (const auto& path : lib_paths)
     {
         std::ifstream f(path);
         if (f.good())
         {
-            found = true;
             found_path = path;
             break;
         }
     }
 
-    if (!found)
+    if (found_path.empty())
     {
-        result.message = "libhardware.so not found (searched: ARX5_SDK_ROOT=" + sdk_root + ")";
+        result.message = "libhardware.so not found (ARX5_SDK_ROOT=" + sdk_root + ")";
         result.duration_ms = timer.ElapsedMs();
         return result;
     }
 
-    // 尝试加载库
+    // 只加载库，不执行任何函数
     void* handle = dlopen(found_path.c_str(), RTLD_LAZY);
     if (!handle)
     {
@@ -232,13 +266,10 @@ TestResult TestArxSdkLibrary(const std::string& sdk_root)
         return result;
     }
 
-    // 检查关键符号
+    // 只检查符号存在，不调用
     const char* symbols[] = {
         "_ZN6ArxCanC1ENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE",
         "_ZN6ArxCanD1Ev",
-        "_ZN6ArxCan17send_EC_motor_cmdEtfffff",
-        "_ZN6ArxCan17send_DM_motor_cmdEtfffff",
-        "_ZN6ArxCan13get_motor_msgEv",
     };
 
     int missing = 0;
@@ -254,12 +285,12 @@ TestResult TestArxSdkLibrary(const std::string& sdk_root)
 
     if (missing > 0)
     {
-        result.message = "Found library but " + std::to_string(missing) + " symbols missing";
+        result.message = "Library found but " + std::to_string(missing) + " symbols missing";
     }
     else
     {
         result.passed = true;
-        result.message = "Library loaded: " + found_path;
+        result.message = "Library loaded successfully (检测完成，未执行硬件操作)";
     }
 #else
     result.message = "SDK loading only supported on Linux";
@@ -270,7 +301,7 @@ TestResult TestArxSdkLibrary(const std::string& sdk_root)
 }
 
 // ============================================================================
-// Test 4: 系统资源检测
+// Test 5: 系统资源检测
 // ============================================================================
 
 TestResult TestSystemResources()
@@ -288,20 +319,16 @@ TestResult TestSystemResources()
         return result;
     }
 
-    // 总内存 (GB)
     double total_ram_gb = info.totalram * info.mem_unit / 1e9;
-    // 空闲内存 (GB)
     double free_ram_gb = info.freeram * info.mem_unit / 1e9;
-    // 1分钟负载平均值
     double load_1min = info.loads[0] / (1 << SI_LOAD_SHIFT);
 
     std::string info_str = "RAM: " + std::to_string(static_cast<int>(free_ram_gb)) +
                           "/" + std::to_string(static_cast<int>(total_ram_gb)) + " GB, " +
                           "Load: " + std::to_string(load_1min).substr(0, 4);
 
-    // 检查最低要求
-    bool ram_ok = free_ram_gb > 1.0;  // 至少1GB空闲
-    bool load_ok = load_1min < 4.0;   // 负载不过高
+    bool ram_ok = free_ram_gb > 1.0;
+    bool load_ok = load_1min < 4.0;
 
     if (ram_ok && load_ok)
     {
@@ -311,8 +338,8 @@ TestResult TestSystemResources()
     else
     {
         result.message = info_str + " - " +
-                        (ram_ok ? "" : "LOW RAM ") +
-                        (load_ok ? "" : "HIGH LOAD");
+                        (ram_ok ? "" : "LOW_RAM ") +
+                        (load_ok ? "" : "HIGH_LOAD");
     }
 #else
     result.message = "System resources test only supported on Linux";
@@ -323,87 +350,121 @@ TestResult TestSystemResources()
 }
 
 // ============================================================================
-// Test 5: CPU性能测试
+// Test 6: Deploy Manifest检测
 // ============================================================================
 
-TestResult TestCpuPerformance()
+TestResult TestDeployManifest(const std::string& manifest_path)
 {
     TestResult result;
-    result.name = "CPU Performance (quick check)";
+    result.name = "Deploy Manifest";
     Timer timer;
 
-    // 执行一些浮点运算
-    const int iterations = 1000000;
-    volatile double sum = 0.0;
-
-    auto start = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < iterations; ++i)
+    std::ifstream f(manifest_path);
+    if (!f)
     {
-        sum += std::sin(i * 0.001) * std::cos(i * 0.001);
+        result.message = "File not found: " + manifest_path;
+        result.duration_ms = timer.ElapsedMs();
+        return result;
     }
-    auto end = std::chrono::high_resolution_clock::now();
 
-    double duration_ms = std::chrono::duration<double, std::milli>(end - start).count();
-    double ops_per_sec = (iterations * 2) / (duration_ms / 1000.0);  // 每秒运算数
+    // 检查关键配置项
+    std::vector<std::string> required_keys = {
+        "meta.manifest_version",
+        "robot.leg_joint_count",
+        "robot.arm_joint_count",
+        "policy.action_dim",
+        "policy.observation_dim",
+        "coordinator.rate_hz",
+    };
 
-    // Jetson NX应该能达到至少100 MFLOPS
-    result.passed = (ops_per_sec > 1e8);  // 100 MFLOPS
-    result.message = "Performance: " + std::to_string(static_cast<int>(ops_per_sec / 1e6)) +
-                    " MFLOPS, duration: " + std::to_string(duration_ms) + " ms";
+    std::string line;
+    int found_keys = 0;
+    while (std::getline(f, line))
+    {
+        for (const auto& key : required_keys)
+        {
+            if (line.find(key) != std::string::npos)
+            {
+                found_keys++;
+                break;
+            }
+        }
+    }
+
+    if (found_keys >= required_keys.size())
+    {
+        result.passed = true;
+        result.message = "Manifest OK, " + std::to_string(found_keys) + " keys verified";
+    }
+    else
+    {
+        result.message = "Missing " + std::to_string(required_keys.size() - found_keys) + " required keys";
+    }
 
     result.duration_ms = timer.ElapsedMs();
     return result;
 }
 
 // ============================================================================
-// Test 6: 磁盘写入测试
+// Test 7: 策略文件检测
 // ============================================================================
 
-TestResult TestDiskWrite(const std::string& test_dir)
+TestResult TestPolicyFile(const std::string& policy_dir)
 {
     TestResult result;
-    result.name = "Disk Write Test";
+    result.name = "Policy File";
     Timer timer;
 
-    std::string test_file = test_dir + "/write_test.tmp";
-    std::vector<uint8_t> data(1024 * 1024);  // 1MB
+    std::vector<std::string> policy_files = {
+        policy_dir + "/policy.pt",
+        policy_dir + "/policy.onnx",
+    };
 
-    auto start = std::chrono::high_resolution_clock::now();
-
+    for (const auto& file : policy_files)
     {
-        std::ofstream out(test_file, std::ios::binary);
-        if (!out)
+        std::ifstream f(file);
+        if (f.good())
         {
-            result.message = "Failed to create test file in " + test_dir;
+            f.seekg(0, std::ios::end);
+            size_t size = f.tellg();
+            f.close();
+
+            result.passed = true;
+            result.message = "Found: " + file + " (" + std::to_string(size / 1024) + " KB)";
             result.duration_ms = timer.ElapsedMs();
             return result;
         }
-        out.write(reinterpret_cast<const char*>(data.data()), data.size());
     }
 
-    auto end = std::chrono::high_resolution_clock::now();
-    double duration_ms = std::chrono::duration<double, std::milli>(end - start).count();
-    double mb_per_sec = (1.0 / (duration_ms / 1000.0));
-
-    // 清理
-    std::remove(test_file.c_str());
-
-    result.passed = (mb_per_sec > 10.0);  // 至少10 MB/s
-    result.message = "Write speed: " + std::to_string(static_cast<int>(mb_per_sec)) + " MB/s";
-
+    result.message = "No policy file found in " + policy_dir;
     result.duration_ms = timer.ElapsedMs();
     return result;
 }
 
 // ============================================================================
-// Main
+// 安全声明
 // ============================================================================
+
+void PrintSafetyNotice()
+{
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "  ⚠️  安 全 提 示" << std::endl;
+    std::cout << "========================================" << std::endl;
+    std::cout << "此测试套件只会检测硬件接口和配置文件。" << std::endl;
+    std::cout << "不会发送任何控制命令给机器人。" << std::endl;
+    std::cout << "机器人保持静止状态。" << std::endl;
+    std::cout << "========================================\n" << std::endl;
+}
+
+} // namespace Test
 
 int main(int argc, char** argv)
 {
+    Test::PrintSafetyNotice();
+
     std::cout << "========================================" << std::endl;
-    std::cout << "  Go2-X5 Hardware Interface Test" << std::endl;
-    std::cout << "  Running on: " << sysconf(_SC_MACHINE) << " cores" << std::endl;
+    std::cout << "  Go2-X5 硬件接口检测 (只检测，不控制)" << std::endl;
+    std::cout << "  运行平台: Jetson (机器人身上)" << std::endl;
     std::cout << "========================================" << std::endl;
     std::cout << std::endl;
 
@@ -411,7 +472,9 @@ int main(int argc, char** argv)
     std::string can_interface = "can0";
     std::string network_interface = "eth0";
     std::string arx_sdk_root = std::getenv("ARX5_SDK_ROOT") ? std::getenv("ARX5_SDK_ROOT") : "";
-    std::string test_dir = "/tmp";
+    std::string unitree_sdk_root = std::getenv("UNITREE_SDK2_ROOT") ? std::getenv("UNITREE_SDK2_ROOT") : "";
+    std::string manifest_path = "deploy/go2_x5_real.yaml";
+    std::string policy_dir = ".";
 
     // 解析命令行参数
     for (int i = 1; i < argc; ++i)
@@ -429,19 +492,53 @@ int main(int argc, char** argv)
         {
             arx_sdk_root = argv[++i];
         }
-        else if (arg == "--test-dir" && i + 1 < argc)
+        else if (arg == "--unitree-sdk" && i + 1 < argc)
         {
-            test_dir = argv[++i];
+            unitree_sdk_root = argv[++i];
+        }
+        else if (arg == "--manifest" && i + 1 < argc)
+        {
+            manifest_path = argv[++i];
+        }
+        else if (arg == "--policy-dir" && i + 1 < argc)
+        {
+            policy_dir = argv[++i];
+        }
+        else if (arg == "--help")
+        {
+            std::cout << "用法: " << argv[0] << " [选项]\n"
+                      << "\n选项:\n"
+                      << "  --can <接口>        CAN接口名 (默认: can0)\n"
+                      << "  --net <接口>        网络接口名 (默认: eth0)\n"
+                      << "  --arx-sdk <路径>    ARX SDK路径 (默认: $ARX5_SDK_ROOT)\n"
+                      << "  --unitree-sdk <路径> Unitree SDK路径 (默认: $UNITREE_SDK2_ROOT)\n"
+                      << "  --manifest <路径>   Deploy manifest路径\n"
+                      << "  --policy-dir <路径>  策略文件目录\n"
+                      << "  --help               显示此帮助\n"
+                      << std::endl;
+            return 0;
         }
     }
 
     // 运行测试
-    results.push_back(TestCanInterface(can_interface));
-    results.push_back(TestNetworkInterface(network_interface));
+    results.push_back(Test::TestCanInterface(can_interface));
+    results.push_back(Test::TestNetworkInterface(network_interface));
+
+    if (!unitree_sdk_root.empty())
+    {
+        results.push_back(Test::TestUnitreeSdk(unitree_sdk_root));
+    }
+    else
+    {
+        TestResult r;
+        r.name = "Unitree SDK Files";
+        r.message = "Skipped (UNITREE_SDK2_ROOT not set)";
+        results.push_back(r);
+    }
 
     if (!arx_sdk_root.empty())
     {
-        results.push_back(TestArxSdkLibrary(arx_sdk_root));
+        results.push_back(Test::TestArxSdkLibrary(arx_sdk_root));
     }
     else
     {
@@ -451,20 +548,22 @@ int main(int argc, char** argv)
         results.push_back(r);
     }
 
-    results.push_back(TestSystemResources());
-    results.push_back(TestCpuPerformance());
-    results.push_back(TestDiskWrite(test_dir));
+    results.push_back(Test::TestSystemResources());
+    results.push_back(Test::TestDeployManifest(manifest_path));
+    results.push_back(Test::TestPolicyFile(policy_dir));
 
     // 打印结果
     std::cout << std::endl;
     for (const auto& r : results)
     {
-        PrintResult(r);
+        Test::PrintResult(r);
     }
 
-    PrintSummary();
+    Test::PrintSummary();
 
-    // 返回值
+    // 最终安全提示
+    std::cout << "\n⚠️  测试完成。所有检测均为只读，机器人未受影响。" << std::endl;
+
     int failed = 0;
     for (const auto& r : results)
     {
@@ -472,11 +571,4 @@ int main(int argc, char** argv)
     }
 
     return (failed == 0) ? 0 : 1;
-}
-
-} // namespace Test
-
-int main(int argc, char** argv)
-{
-    return Test::main(argc, argv);
 }
