@@ -58,21 +58,11 @@ go2_x5/robot_lab:
   dof_pos_scale: 1.0
   dof_vel_scale: 0.05
   commands_scale: [1.0, 1.0, 1.0]
-  cmd_vel_alpha: 0.2
   joystick_deadband: 0.05
   # Key[1] fixed command (x forward, y lateral, yaw)
   fixed_cmd_x: 0.5
   fixed_cmd_y: 0.0
   fixed_cmd_yaw: 0.0
-  # Key[1] behavior:
-  # true  -> enter RL + navigation mode ON (use /cmd_vel as command source)
-  # false -> enter RL + fixed_cmd_*
-  key1_prefer_navigation_mode: false
-  # When Key[1] enters navigation mode, inject/publish one /cmd_vel command once.
-  key1_publish_cmd_vel_on_navigation: false
-  key1_navigation_cmd_x: 0.5
-  key1_navigation_cmd_y: 0.0
-  key1_navigation_cmd_yaw: 0.0
   torque_limits: [23.5, 23.5, 23.5,
                   23.5, 23.5, 23.5,
                   23.5, 23.5, 23.5,
@@ -109,12 +99,8 @@ go2_x5/robot_lab:
   arm_bridge_require_live_state: true
   arm_bridge_shadow_feedback_enabled: false
   arm_bridge_state_timeout_sec: 0.25
-  # Default to policy-driven arm output during RL locomotion. Key[2]/Key[4] can still re-enable hold explicitly.
+  # Default to policy-driven arm output during RL locomotion. Key[2]/Key[3] override with preset/home targets.
   arm_hold_enabled: false
-  # Key[2] behavior:
-  # true  -> use latest received /arm_joint_pos_cmd, fallback to arm_key_pose/arm_hold_pose
-  # false -> skip topic command and use arm_key_pose/arm_hold_pose directly
-  key2_prefer_topic_command: true
   # Real deployment default: validate integrated whole-body policy first, not permanent arm hold.
   arm_lock: false
   arm_lock_pose: [0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -125,7 +111,7 @@ go2_x5/robot_lab:
   arm_command_smoothing_time: 15.0
   # MuJoCo arm output filter (EMA). Smaller = smoother.
   arm_output_filter_alpha: 0.02
-  # Key[2] fallback pose when no valid /arm_joint_pos_cmd target has been received yet.
+  # Key[2] target pose for preset arm tracking.
   arm_key_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]
   # Each pose has 6 values (arm_joint1..6), total length = arm_sequence_steps * 6
   arm_sequence_interval: 2.0

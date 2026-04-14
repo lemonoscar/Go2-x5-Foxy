@@ -74,12 +74,11 @@ go2_x5:
   arm_bridge_require_state: true
   arm_bridge_require_live_state: true
   arm_bridge_state_timeout_sec: 0.25
-  # Keep arm target handling available before RL config is loaded so Key[2]
+  # Keep arm target handling available before RL config is loaded so Key[2]/Key[3]
   # and /arm_joint_pos_cmd work from a cold boot.
   arm_command_size: 6
   arm_joint_command_topic: "/arm_joint_pos_cmd"
   arm_hold_enabled: true
-  key2_prefer_topic_command: true
   arm_hold_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]
   arm_key_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]
   arm_command_smoothing_time: 15.0

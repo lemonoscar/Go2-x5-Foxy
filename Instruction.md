@@ -3,7 +3,7 @@
 `rl_ras_n` 现在只保留 `Go2-X5 sim2real` 主路径。
 
 目标环境：
-- Jetson NX
+- Jetson NX / Orin
 - Ubuntu 20.04
 - ROS2 Foxy
 - ARM64
@@ -23,13 +23,13 @@ echo $ROS_DISTRO
 ```bash
 export ARX5_SDK_ROOT=~/arx5-sdk
 export ARX5_SDK_LIB_PATH=$ARX5_SDK_ROOT/lib/aarch64
-export UNITREE_SDK2_ROOT=~/Desktop/unitree_sdk2
+export UNITREE_SDK2_ROOT=~/unitree_sdk2
 export LD_LIBRARY_PATH=$ARX5_SDK_LIB_PATH:$LD_LIBRARY_PATH
 ```
 
 注意：
-- Ubuntu 路径区分大小写，桌面目录应写成 `~/Desktop`，不是 `~/desktop`
-- 如果 `UNITREE_SDK2_ROOT` 不在 `~/Desktop/unitree_sdk2`，按实际目录修改
+- 如果 SDK 路径不在上述默认位置，按实际目录修改
+- `UNITREE_SDK2_ROOT` 默认为 `~/unitree_sdk2`（不是 `~/Desktop/unitree_sdk2`）
 
 ## 2. CAN 检查
 
@@ -58,7 +58,7 @@ source /opt/ros/foxy/setup.bash
 source ~/rl_ras_n/install/setup.bash
 export ARX5_SDK_ROOT=~/arx5-sdk
 export ARX5_SDK_LIB_PATH=$ARX5_SDK_ROOT/lib/aarch64
-export UNITREE_SDK2_ROOT=~/Desktop/unitree_sdk2
+export UNITREE_SDK2_ROOT=~/unitree_sdk2
 export LD_LIBRARY_PATH=$ARX5_SDK_LIB_PATH:$LD_LIBRARY_PATH
 
 ros2 launch rl_sar go2_x5_real_dual.launch.py \
@@ -67,15 +67,16 @@ ros2 launch rl_sar go2_x5_real_dual.launch.py \
 ```
 
 注意：
-- `start_arm_bridge` 参数已移除 - 机械臂现在直接通过 InProcessSdk 控制
-- `arm_interface_name` 参数已移除 - 从 manifest 中读取 CAN 接口配置
+- 机械臂通过 ArxAdapter InProcessSdk 控制（已移除 Bridge Backend）
+- `arm_interface_name` 参数已移除，从 manifest 中的 `arm_adapter.can_interface` 读取
+- `enable_ros2_runtime` 默认从 manifest 读取（manifest 中 `ops.ros2_enabled: false`）
 
 ## 5. 启动后必查
 
 - 日志打印 manifest path 和 manifest hash
 - `Supervisor initialized ... manifest_valid=true`
 - `UnitreeAdapter active: iface=eth0 ...`
-- `ArxAdapter active: can=can0, backend=sdk_inprocess_arxcan`
+- `ArxAdapter active: can=can0, backend=InProcessSdk`
 - 主控进入 `PASSIVE/READY`
 - `/arx_x5/joint_state` 有持续更新
 - 不应出现 `go2_x5 layered config validation failed`
@@ -133,5 +134,7 @@ ros2 topic hz /arx_x5/joint_state
 
 - PPO 只控制 `12` 条腿
 - arm 控制通过 `ArxAdapter` 使用 InProcessSdk（dlopen 加载 libhardware.so）
+  - Bridge Backend 已移除，不再支持
 - 最终输出统一经过 `coordinator`
 - ROS `Float32MultiArray` 不再作为控制主路径
+- `ops.ros2_enabled` 默认为 `false`（节省 Jetson NX 内存）

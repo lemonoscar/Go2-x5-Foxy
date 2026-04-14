@@ -1,112 +1,104 @@
-# Go2-X5 新范式部署文档总览
+# Go2-X5 部署文档总览
+
+## 当前状态（2026-04-14）
+
+**核心组件已完整实现**，文档已更新以反映代码现状。
+
+**重要变更**：
+- ArxAdapter 已移除 Bridge Backend，只保留 InProcessSdk
+- FallbackSmoother 已完整实现
+- 部分文档已标记为过时或历史参考
+
+请以代码为准，参考[开发思路总览](./开发思路/00-总览.md)。
 
 ## 1. 文档目标
 
-本目录用于把当前 `Go2-X5 sim2real` 新部署范式闭合成一套可执行文档。
+本目录为 `Go2-X5 sim2real` 部署提供完整的设计和实施文档。
 
-新范式的核心前提：
-
-- PPO 只控制 12 个腿关节
-- 机械臂由外部控制链路负责
-- gripper 暂不进入 locomotion PPO 主闭环
-- 实机系统的重点是 arm-conditioned base stability，而不是 whole-body PPO 统一出动作
-
+**核心范式**：
+- PPO 只控制 12 个腿关节（locomotion）
+- 机械臂由外部pipeline控制（arm独立）
+- 系统重点是 arm-conditioned base stability
+- Coordinator负责混合控制协调
 
 ## 2. 文档清单
 
-### 2.1 总体设计
+### 2.1 核心设计
 
-- [项目蓝图.md](/home/lemon/Issac/rl_ras_n/doc/项目蓝图.md)
-  说明新范式下的模块结构、职责边界、频率合同和系统目标。
+- [项目蓝图.md](./项目蓝图.md) - 模块结构、职责边界、频率合同
+- [消息协议设计.md](./消息协议设计.md) - typed IPC协议、frame设计
+- [模式机设计.md](./模式机设计.md) - supervisor模式机定义
+- [部署配置规范.md](./部署配置规范.md) - deploy manifest规范
 
-- [消息协议设计.md](/home/lemon/Issac/rl_ras_n/doc/消息协议设计.md)
-  说明 typed IPC/ROS 镜像协议、状态与命令 frame 设计、时序与 freshness 规则。
+### 2.2 实施指南（更新版）
 
-### 2.2 可执行落地
+- [开发思路/00-总览.md](./开发思路/00-总览.md) - **基于代码审查的最新评估**
+- [开发思路/01-第一阶段-配置增强.md](./开发思路/01-第一阶段-配置增强.md)
+- [开发思路/02-第二阶段-训练一致性.md](./开发思路/02-第二阶段-训练一致性.md)
+- [开发思路/03-第三阶段-安全与质量.md](./开发思路/03-第三阶段-安全与质量.md) - **部分任务已完成**
 
-- [实施路线图.md](/home/lemon/Issac/rl_ras_n/doc/实施路线图.md)
-  说明建议的阶段拆分、代码改造顺序、每阶段完成标准和推荐文件落点。
+### 2.3 验收与参考
 
-- [模式机设计.md](/home/lemon/Issac/rl_ras_n/doc/模式机设计.md)
-  说明 supervisor 的模式机、事件、转移条件、接管策略和 fault latch 规则。
-
-- [部署配置规范.md](/home/lemon/Issac/rl_ras_n/doc/部署配置规范.md)
-  说明统一 deploy manifest 的结构、字段、默认策略与校验要求。
-
-- [上机验证Checklist.md](/home/lemon/Issac/rl_ras_n/doc/上机验证Checklist.md)
-  说明从 preflight、台架、低风险上机到正式部署的逐级验证清单。
-
+- [上机验证Checklist.md](./上机验证Checklist.md) - 逐级验证清单
+- [第1轮冻结契约.md](./第1轮冻结契约.md) - 接口与边界冻结
+- [问题发现与解决思路.md](./问题发现与解决思路.md) - **已更新为代码现状评估**
 
 ## 3. 推荐阅读顺序
 
-建议按以下顺序阅读和实施：
+**新用户**（了解架构）：
+1. README.md（项目根目录）
+2. 项目蓝图.md
+3. 消息协议设计.md
+4. 模式机设计.md
 
-1. `项目蓝图.md`
-2. `消息协议设计.md`
-3. `模式机设计.md`
-4. `部署配置规范.md`
-5. `实施路线图.md`
-6. `上机验证Checklist.md`
+**实施者**（按代码现状推进）：
+1. 开发思路/00-总览.md
+2. 开发思路/01-第一阶段-配置增强.md
+3. 开发思路/02-第二阶段-训练一致性.md
+4. 上机验证Checklist.md
 
-理由：
+## 4. 代码实现状态
 
-- 先统一系统范式
-- 再统一消息与时序合同
-- 再统一 supervisor 的模式行为
-- 再固化配置真值源
-- 最后按路线图落地并按 checklist 验证
+| 组件 | 文档状态 | 代码状态 |
+|------|----------|----------|
+| Arx In-Process SDK | ✅ 文档已更新 | ✅ 完整实现 |
+| Bridge Fallback | ❌ 已废弃 | ❌ 已移除 |
+| ObservationBuilder | 框架描述 | ✅ 完整实现+验证 |
+| Policy Freshness | 语义不完整 | ✅ 完整语义输出 |
+| FallbackSmoother | 框架描述 | ✅ 五次多项式完整实现 |
+| 诊断聚合器 | 框架描述 | ✅ 完整实现 |
 
+**结论**：代码实现质量**高于早期文档描述**。文档已更新以反映当前状态。
 
-## 4. 直接执行建议
+## 5. 实施优先级（当前）
 
-如果按工程落地优先级执行，建议直接照以下顺序推进：
+### 第一优先级 - 配置增强
 
-### 第一优先级
+- 观测验证纳入deploy manifest
+- Drift阈值台架校准
+- 状态判断逻辑统一
 
-- 建立统一 deploy manifest
-- 建立 typed protocol
-- 将当前 arm bridge 的 `Float32MultiArray` 和裸 IPC payload 替换成 typed frame
+### 第二优先级 - 训练一致性
 
-### 第二优先级
+- Python ObservationBuilder
+- Snapshot生成工具
+- DR参数对齐
 
-- 建立 `deploy_supervisor`
-- 收拢模式机
-- 明确 `RL_DOG_ONLY_ACTIVE` / `DEGRADED_ARM` / `DEGRADED_BODY`
+### 第三优先级 - 验收增强
 
-### 第三优先级
+- 自动化验收测试
+- 长期稳定性监控
 
-- 引入 `hybrid_motion_coordinator`
-- 将腿部 PPO 输出和 arm 外部命令正式分流
-- 将限幅、过期、tracking error 判断统一迁入 coordinator
+## 6. 关键结论
 
-### 第四优先级
+1. **不需要推倒重来** - 核心功能已实现
+2. **增强而非重写** - 在现有实现上增强配置和验证
+3. **代码为准** - 文档正在追赶代码
+4. **渐进式验证** - 先WARNING后ERROR，逐步收紧
 
-- 统一 diagnostics
-- 增加 drift / tracking / stale / jitter 指标
-- 开始台架和上机分级验证
+## 7. 快速链接
 
-
-## 5. 当前范式的关键结论
-
-为了避免文档执行过程中又回退到旧范式，这里再次明确：
-
-- 不再把 arm 放回 PPO output head
-- 不再把系统理解为 whole-body PPO 部署问题
-- 真实部署的主问题是：
-  - arm 条件下的底盘稳定
-  - 零速时的平面漂移
-  - 低速行走下的抗扰和 tracking
-
-
-## 6. 完成标志
-
-只有当以下条件同时成立，才能认为这套文档闭环完成并具备执行价值：
-
-- 模块结构清楚
-- 协议清楚
-- 模式机清楚
-- 配置规范清楚
-- 实施顺序清楚
-- 上机验证清单清楚
-
-本目录现在的目标就是满足这 6 点。
+- 源码：`src/rl_sar/`
+- 协议定义：`src/rl_sar/include/rl_sar/protocol/go2_x5_protocol_types.hpp`
+- 配置：`deploy/go2_x5_real.yaml`
+- 测试：`src/rl_sar/test/`

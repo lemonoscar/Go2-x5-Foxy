@@ -11,6 +11,16 @@
 - 零速时无明显平面漂移
 - 低速 locomotion 时能抗 arm 扰动
 
+当前最小键盘语义：
+
+- `0`: get-up
+- `1`: 进入 RL
+- `2`: arm preset
+- `3`: arm home / hold
+- `Space`: body 速度清零
+- `Esc`: e-stop
+- `R`: reset
+
 
 ## 2. 启动前 Preflight
 
@@ -80,6 +90,7 @@
 - [ ] 状态新鲜度持续稳定
 - [ ] diagnostics 指标可持续输出
 - [ ] 不进入主动步态时整机稳定
+- [ ] 按 `1` 前若未完成 `0` 起身，不应误进入 RL
 
 
 ## 5. 静态 arm motion 验证
@@ -89,6 +100,7 @@
 ### 5.1 小幅动作
 
 - [ ] base command = 0
+- [ ] 通过 `2` 进入 arm preset，supervisor 进入 `MANUAL_ARM`
 - [ ] arm 做小幅位姿变化
 - [ ] 无明显 `xy drift`
 - [ ] 无明显 `yaw drift`
@@ -106,6 +118,7 @@
 - [ ] arm 做大幅合法位姿变化
 - [ ] 整机保持可控
 - [ ] 若 tracking error 超阈值，系统进入 `DEGRADED_ARM`
+- [ ] 按 `3` 后 arm 能回 home / hold，body 不误进入 locomotion
 
 
 ## 6. 零速漂移验证
@@ -161,6 +174,8 @@
 
 - [ ] `FAULT_LATCHED` 后不能自动恢复
 - [ ] 人工 reset 后可重新 probe
+- [ ] `Esc` 后必须进入 `FAULT_LATCHED`
+- [ ] `Space` 只清零 body 速度，不应替代 e-stop
 
 
 ## 9. 记录指标
