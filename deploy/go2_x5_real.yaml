@@ -44,6 +44,16 @@ body_adapter:
   command_rate_hz: 200
   require_lowstate: true
   lowstate_timeout_ms: 50
+  enable_velocity_estimation: true
+  velocity_estimator:
+    hip_length: 0.08
+    thigh_length: 0.213
+    calf_length: 0.213
+    accelerometer_variance: 0.1
+    sensor_variance: 0.1
+    initial_variance: 0.1
+    moving_window_size: 120
+    foot_contact_force_threshold: 20.0
 
 arm_adapter:
   interface: "arx5_sdk"

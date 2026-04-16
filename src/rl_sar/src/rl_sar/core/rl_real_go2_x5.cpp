@@ -987,6 +987,28 @@ void RL_Real_Go2X5::InitializeAdapters()
     body_config.command_rate_hz = manifest.body_adapter.command_rate_hz;
     body_config.require_lowstate = manifest.body_adapter.require_lowstate;
     body_config.lowstate_timeout_ms = static_cast<double>(manifest.body_adapter.lowstate_timeout_ms);
+    body_config.enable_velocity_estimation = manifest.body_adapter.enable_velocity_estimation;
+    body_config.velocity_estimator_config.hip_length =
+        static_cast<float>(manifest.body_adapter.velocity_estimator.hip_length);
+    body_config.velocity_estimator_config.thigh_length =
+        static_cast<float>(manifest.body_adapter.velocity_estimator.thigh_length);
+    body_config.velocity_estimator_config.calf_length =
+        static_cast<float>(manifest.body_adapter.velocity_estimator.calf_length);
+    body_config.velocity_estimator_config.accelerometer_variance =
+        static_cast<float>(manifest.body_adapter.velocity_estimator.accelerometer_variance);
+    body_config.velocity_estimator_config.sensor_variance =
+        static_cast<float>(manifest.body_adapter.velocity_estimator.sensor_variance);
+    body_config.velocity_estimator_config.initial_variance =
+        static_cast<float>(manifest.body_adapter.velocity_estimator.initial_variance);
+    body_config.velocity_estimator_config.moving_window_size =
+        manifest.body_adapter.velocity_estimator.moving_window_size;
+    body_config.velocity_estimator_config.foot_contact_force_threshold =
+        static_cast<float>(manifest.body_adapter.velocity_estimator.foot_contact_force_threshold);
+    if (body_config.command_rate_hz > 0)
+    {
+        body_config.velocity_estimator_config.default_control_dt =
+            1.0f / static_cast<float>(body_config.command_rate_hz);
+    }
     body_config.leg_dof_count = static_cast<uint16_t>(manifest.robot.leg_joint_count);
     body_config.source_id = 1U;
     body_config.initialize_channel_factory = false;

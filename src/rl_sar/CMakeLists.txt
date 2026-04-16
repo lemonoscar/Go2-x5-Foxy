@@ -319,6 +319,7 @@ include_directories(
     include/rl_sar/adapters
     include/rl_sar/protocol
     include/rl_sar/runtime
+    include/rl_sar/state_estimation
     library/core/matplotlibcpp
     library/core/observation_buffer
     library/core/rl_sdk
@@ -420,7 +421,9 @@ endif()
 
 # library for unitree adapter (isolates DDS from main logic)
 if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
-    add_library(unitree_adapter src/rl_sar/adapters/unitree/unitree_adapter.cpp)
+    add_library(unitree_adapter
+        src/rl_sar/adapters/unitree/unitree_adapter.cpp
+        src/rl_sar/state_estimation/velocity_estimator.cpp)
     target_include_directories(unitree_adapter BEFORE PRIVATE
         ${UNITREE_SDK2_THIRDPARTY_INCLUDE}
         ${UNITREE_SDK2_THIRDPARTY_DDSCXX_INCLUDE}
@@ -484,6 +487,8 @@ if(SYSTEM_TYPE STREQUAL "Linux" AND UNITREE_SDK2_AVAILABLE)
         src/rl_sar/go2x5/state/go2_x5_state_io.cpp
         src/rl_sar/go2x5/state/go2_x5_state_management.cpp
         src/rl_sar/go2x5/state/go2_x5_utility.cpp
+        # State Estimation
+        src/rl_sar/state_estimation/velocity_estimator.cpp
         # Runtime
         src/rl_sar/protocol/go2_x5_protocol.cpp
         src/rl_sar/runtime/coordinator/go2_x5_coordinator.cpp
@@ -694,6 +699,7 @@ if(USE_CMAKE AND BUILD_TESTING)
         add_executable(test_unitree_adapter_contract
             test/test_unitree_adapter_contract.cpp
             src/rl_sar/adapters/unitree/unitree_adapter.cpp
+            src/rl_sar/state_estimation/velocity_estimator.cpp
             src/rl_sar/protocol/go2_x5_protocol.cpp)
         target_include_directories(test_unitree_adapter_contract BEFORE PRIVATE
             ${UNITREE_SDK2_THIRDPARTY_INCLUDE}
@@ -743,6 +749,17 @@ if(USE_CMAKE AND BUILD_TESTING)
         ${YAML_CPP_LIBRARIES}
     )
     add_test(NAME test_observation_builder COMMAND test_observation_builder)
+
+    add_executable(test_velocity_estimator
+        test/test_velocity_estimator.cpp
+        src/rl_sar/state_estimation/velocity_estimator.cpp)
+    target_include_directories(test_velocity_estimator PRIVATE include)
+    target_link_libraries(test_velocity_estimator
+        gtest
+        gtest_main
+        Threads::Threads
+    )
+    add_test(NAME test_velocity_estimator COMMAND test_velocity_estimator)
 
     # Diagnostics tests
     add_executable(test_drift_data_recorder

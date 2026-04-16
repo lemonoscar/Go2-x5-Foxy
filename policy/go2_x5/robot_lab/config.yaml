@@ -52,7 +52,7 @@ go2_x5/robot_lab:
                  0.125, 0.25, 0.25,
                  0.125, 0.25, 0.25]
   wheel_indices: []
-  lin_vel_scale: 1.0
+  lin_vel_scale: 2.0
   # Match training (env.yaml): base_ang_vel scale=0.25, velocity_commands scale=1.0
   ang_vel_scale: 0.25
   dof_pos_scale: 1.0

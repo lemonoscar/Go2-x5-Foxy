@@ -188,6 +188,11 @@ UnitreeAdapter::UnitreeAdapter()
     latest_state_.projected_gravity.fill(0.0f);
     latest_state_.lowstate_age_us = 0;
     latest_state_.dds_ok = 0;
+
+    // Initialize velocity estimation buffers
+    foot_force_.fill(0.0f);
+    leg_position_buffer_.fill(0.0f);
+    leg_velocity_buffer_.fill(0.0f);
 }
 
 UnitreeAdapter::~UnitreeAdapter()
@@ -234,6 +239,13 @@ UnitreeAdapter::Status UnitreeAdapter::Initialize(const Config& config)
     }
 
     config_ = config;
+
+    // Create velocity estimator if enabled
+    if (config_.enable_velocity_estimation)
+    {
+        velocity_estimator_ = std::make_unique<state_estimation::VelocityEstimator>(
+            config_.velocity_estimator_config);
+    }
 
     try
     {
@@ -300,6 +312,11 @@ UnitreeAdapter::Status UnitreeAdapter::Start()
     lowstate_seen_.store(false, std::memory_order_release);
     lowstate_seq_.store(0, std::memory_order_release);
     command_seq_.store(0, std::memory_order_release);
+    velocity_estimator_ready_ = false;
+    if (velocity_estimator_)
+    {
+        velocity_estimator_->Reset();
+    }
 
     started_.store(true, std::memory_order_release);
     return Status::kOk;
@@ -523,12 +540,13 @@ void UnitreeAdapter::LowStateMessageHandler(const void* message)
     latest_state_.base_ang_vel = latest_state_.imu_gyro;
     latest_state_.projected_gravity = RotateInverse(
         latest_state_.imu_quat, std::array<float, 3>{0.0f, 0.0f, -1.0f});
-    latest_state_.base_lin_vel = {0.0f, 0.0f, 0.0f};
 
     // Copy motor state (we only care about the first 12 for leg DOFs)
     latest_state_.leg_q.fill(0.0f);
     latest_state_.leg_dq.fill(0.0f);
     latest_state_.leg_tau.fill(0.0f);
+    foot_force_.fill(0.0f);
+
     for (int i = 0; i < protocol::kDogJointCount; ++i)
     {
         const int motor_index = ResolveMotorIndexForBodyJoint(i);
@@ -540,6 +558,41 @@ void UnitreeAdapter::LowStateMessageHandler(const void* message)
         latest_state_.leg_q[static_cast<size_t>(i)] = motor_state.q();
         latest_state_.leg_dq[static_cast<size_t>(i)] = motor_state.dq();
         latest_state_.leg_tau[static_cast<size_t>(i)] = motor_state.tau_est();
+
+        // Store in buffer for velocity estimator
+        leg_position_buffer_[i] = motor_state.q();
+        leg_velocity_buffer_[i] = motor_state.dq();
+    }
+
+    // Use the SDK-provided foot contact forces instead of inferred motor torques.
+    // The project leg order is [FR, FL, RR, RL], matching both training and Unitree Go2.
+    for (size_t leg_id = 0; leg_id < foot_force_.size(); ++leg_id)
+    {
+        const float estimated_force = std::fabs(static_cast<float>(msg->foot_force_est()[leg_id]));
+        const float raw_force = std::fabs(static_cast<float>(msg->foot_force()[leg_id]));
+        foot_force_[leg_id] =
+            std::fabs(estimated_force) > 1e-6f ? estimated_force : raw_force;
+    }
+
+    // Estimate base linear velocity
+    if (velocity_estimator_)
+    {
+        velocity_estimator_->Update(
+            now_ns,
+            latest_state_.imu_acc,
+            latest_state_.imu_gyro,
+            latest_state_.imu_quat,
+            leg_position_buffer_,
+            leg_velocity_buffer_,
+            foot_force_
+        );
+        latest_state_.base_lin_vel = velocity_estimator_->GetEstimatedVelocity();
+        velocity_estimator_ready_ = velocity_estimator_->IsReady();
+    }
+    else
+    {
+        // Velocity estimation disabled
+        latest_state_.base_lin_vel = {0.0f, 0.0f, 0.0f};
     }
 
     // Update frame metadata

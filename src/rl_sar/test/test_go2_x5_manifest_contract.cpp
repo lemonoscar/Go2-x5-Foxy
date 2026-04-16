@@ -1,6 +1,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <cmath>
 #include <string>
 
 #include <yaml-cpp/yaml.h>
@@ -45,6 +46,23 @@ void CheckFrozenManifest(const RLConfig::DeployManifest& manifest)
     Require(manifest.policy.enable_arm_command_delta_obs == false, "command delta obs must stay disabled");
     Require(manifest.body_adapter.command_rate_hz == 200, "body command rate mismatch");
     Require(manifest.body_adapter.lowstate_timeout_ms == 50, "body lowstate timeout mismatch");
+    Require(manifest.body_adapter.enable_velocity_estimation, "velocity estimation must stay enabled");
+    Require(std::abs(manifest.body_adapter.velocity_estimator.hip_length - 0.08) < 1e-9,
+        "velocity estimator hip length mismatch");
+    Require(std::abs(manifest.body_adapter.velocity_estimator.thigh_length - 0.213) < 1e-9,
+        "velocity estimator thigh length mismatch");
+    Require(std::abs(manifest.body_adapter.velocity_estimator.calf_length - 0.213) < 1e-9,
+        "velocity estimator calf length mismatch");
+    Require(std::abs(manifest.body_adapter.velocity_estimator.accelerometer_variance - 0.1) < 1e-9,
+        "velocity estimator accelerometer variance mismatch");
+    Require(std::abs(manifest.body_adapter.velocity_estimator.sensor_variance - 0.1) < 1e-9,
+        "velocity estimator sensor variance mismatch");
+    Require(std::abs(manifest.body_adapter.velocity_estimator.initial_variance - 0.1) < 1e-9,
+        "velocity estimator initial variance mismatch");
+    Require(manifest.body_adapter.velocity_estimator.moving_window_size == 120,
+        "velocity estimator moving window mismatch");
+    Require(std::abs(manifest.body_adapter.velocity_estimator.foot_contact_force_threshold - 20.0) < 1e-9,
+        "velocity estimator contact threshold mismatch");
     Require(manifest.arm_adapter.arm_target_rate_hz == 200, "arm target rate mismatch");
     Require(manifest.arm_adapter.servo_rate_hz == 500, "arm servo rate mismatch");
     Require(manifest.arm_adapter.require_live_state, "arm live state must stay required");
@@ -135,6 +153,9 @@ int main()
     const std::string manifest_dump = loader.ManifestDump();
     RequireContains(manifest_dump, "policy.action_dim=12", manifest_path_str.c_str());
     RequireContains(manifest_dump, "coordinator.rate_hz=200", manifest_path_str.c_str());
+    RequireContains(manifest_dump, "body_adapter.enable_velocity_estimation=1", manifest_path_str.c_str());
+    RequireContains(manifest_dump, "body_adapter.velocity_estimator.hip_length=0.08", manifest_path_str.c_str());
+    RequireContains(manifest_dump, "body_adapter.velocity_estimator.moving_window_size=120", manifest_path_str.c_str());
     RequireContains(manifest_dump, "arm_adapter.arm_cmd_topic=/arx_x5/joint_cmd", manifest_path_str.c_str());
     RequireContains(manifest_dump, "ops.bridge_rmw_implementation=rmw_cyclonedds_cpp", manifest_path_str.c_str());
 

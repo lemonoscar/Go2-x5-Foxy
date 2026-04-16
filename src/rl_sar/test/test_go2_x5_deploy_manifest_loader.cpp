@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -26,6 +27,17 @@ void CheckFrozenContract(const RLConfig::DeployManifest& manifest)
     Require(manifest.policy.policy_rate_hz == 50, "policy.policy_rate_hz must be 50");
     Require(manifest.body_adapter.command_rate_hz == 200, "body_adapter.command_rate_hz must be 200");
     Require(manifest.body_adapter.lowstate_timeout_ms == 50, "body_adapter.lowstate_timeout_ms must be 50");
+    Require(manifest.body_adapter.enable_velocity_estimation, "body_adapter.enable_velocity_estimation must be true");
+    Require(std::abs(manifest.body_adapter.velocity_estimator.hip_length - 0.08) < 1e-9,
+        "body_adapter.velocity_estimator.hip_length mismatch");
+    Require(std::abs(manifest.body_adapter.velocity_estimator.thigh_length - 0.213) < 1e-9,
+        "body_adapter.velocity_estimator.thigh_length mismatch");
+    Require(std::abs(manifest.body_adapter.velocity_estimator.calf_length - 0.213) < 1e-9,
+        "body_adapter.velocity_estimator.calf_length mismatch");
+    Require(manifest.body_adapter.velocity_estimator.moving_window_size == 120,
+        "body_adapter.velocity_estimator.moving_window_size mismatch");
+    Require(std::abs(manifest.body_adapter.velocity_estimator.foot_contact_force_threshold - 20.0) < 1e-9,
+        "body_adapter.velocity_estimator.foot_contact_force_threshold mismatch");
     Require(manifest.arm_adapter.arm_target_rate_hz == 200, "arm_adapter.arm_target_rate_hz must be 200");
     Require(manifest.arm_adapter.servo_rate_hz == 500, "arm_adapter.servo_rate_hz must be 500");
     Require(manifest.arm_adapter.arm_state_timeout_ms == 50, "arm_adapter.arm_state_timeout_ms must be 50");

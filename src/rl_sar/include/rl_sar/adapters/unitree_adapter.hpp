@@ -2,6 +2,7 @@
 #define RL_SAR_ADAPTERS_UNITREE_ADAPTER_HPP
 
 #include "rl_sar/protocol/go2_x5_protocol.hpp"
+#include "rl_sar/state_estimation/velocity_estimator.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -78,6 +79,12 @@ public:
 
         /// Whether ChannelFactory::Init should be performed by the adapter.
         bool initialize_channel_factory = true;
+
+        /// Whether to enable velocity estimation
+        bool enable_velocity_estimation = true;
+
+        /// Velocity estimator configuration
+        state_estimation::VelocityEstimator::Config velocity_estimator_config;
     };
 
     /**
@@ -272,6 +279,13 @@ private:
 
     // Source monotonic timestamp for seq tracking
     uint64_t source_monotonic_ns_;
+
+    // Velocity estimation
+    std::unique_ptr<state_estimation::VelocityEstimator> velocity_estimator_;
+    std::array<float, 4> foot_force_;  // 4 foot contact forces in [FR, FL, RR, RL]
+    std::array<float, 12> leg_position_buffer_;  // Joint positions in project order
+    std::array<float, 12> leg_velocity_buffer_;  // Joint velocities in project order
+    bool velocity_estimator_ready_ = false;
 };
 
 /**

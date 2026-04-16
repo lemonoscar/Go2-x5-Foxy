@@ -64,6 +64,18 @@ struct DeployManifestPolicy
     bool enable_arm_command_delta_obs = false;
 };
 
+struct DeployManifestVelocityEstimator
+{
+    double hip_length = 0.08;
+    double thigh_length = 0.213;
+    double calf_length = 0.213;
+    double accelerometer_variance = 0.1;
+    double sensor_variance = 0.1;
+    double initial_variance = 0.1;
+    int moving_window_size = 120;
+    double foot_contact_force_threshold = 20.0;
+};
+
 struct DeployManifestBodyAdapter
 {
     std::string interface;
@@ -71,6 +83,8 @@ struct DeployManifestBodyAdapter
     int command_rate_hz = 0;
     bool require_lowstate = false;
     int lowstate_timeout_ms = 0;
+    bool enable_velocity_estimation = true;
+    DeployManifestVelocityEstimator velocity_estimator;
 };
 
 struct DeployManifestArmAdapter

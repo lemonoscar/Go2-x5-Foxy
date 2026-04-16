@@ -149,6 +149,7 @@ ValidationResult DeployManifestLoader::ValidateNode(const YAML::Node& node)
     const YAML::Node robot = node["robot"];
     const YAML::Node policy = node["policy"];
     const YAML::Node body_adapter = node["body_adapter"];
+    const YAML::Node velocity_estimator = body_adapter["velocity_estimator"];
     const YAML::Node arm_adapter = node["arm_adapter"];
     const YAML::Node coordinator = node["coordinator"];
     const YAML::Node supervisor = node["supervisor"];
@@ -173,7 +174,8 @@ ValidationResult DeployManifestLoader::ValidateNode(const YAML::Node& node)
     RequireAllowedKeys(policy, {"mode", "action_dim", "observation_dim", "policy_rate_hz",
         "model_path", "enable_arm_tracking_error_obs", "enable_arm_command_delta_obs"}, "policy", &result);
     RequireAllowedKeys(body_adapter, {"interface", "network_interface", "command_rate_hz",
-        "require_lowstate", "lowstate_timeout_ms"}, "body_adapter", &result);
+        "require_lowstate", "lowstate_timeout_ms", "enable_velocity_estimation",
+        "velocity_estimator"}, "body_adapter", &result);
     RequireAllowedKeys(arm_adapter, {"interface", "can_interface", "arm_cmd_topic", "arm_state_topic",
         "arm_joint_command_topic", "arm_target_rate_hz", "servo_rate_hz", "background_send_recv",
         "controller_dt", "require_live_state", "arm_state_timeout_ms", "arm_tracking_error_limit"},
@@ -216,6 +218,41 @@ ValidationResult DeployManifestLoader::ValidateNode(const YAML::Node& node)
     RequireScalarInt(body_adapter, "command_rate_hz", "body_adapter", nullptr, &result);
     RequireScalarBool(body_adapter, "require_lowstate", "body_adapter", nullptr, &result);
     RequireScalarInt(body_adapter, "lowstate_timeout_ms", "body_adapter", nullptr, &result);
+    if (body_adapter["enable_velocity_estimation"])
+    {
+        RequireScalarBool(body_adapter, "enable_velocity_estimation", "body_adapter", nullptr, &result);
+    }
+    if (velocity_estimator)
+    {
+        RequireMap(velocity_estimator, "body_adapter.velocity_estimator", &result);
+        if (result.is_valid)
+        {
+            RequireAllowedKeys(velocity_estimator, {
+                "hip_length", "thigh_length", "calf_length",
+                "accelerometer_variance", "sensor_variance", "initial_variance",
+                "moving_window_size", "foot_contact_force_threshold"
+            }, "body_adapter.velocity_estimator", &result);
+        }
+        if (result.is_valid)
+        {
+            RequireScalarDouble(
+                velocity_estimator, "hip_length", "body_adapter.velocity_estimator", nullptr, &result);
+            RequireScalarDouble(
+                velocity_estimator, "thigh_length", "body_adapter.velocity_estimator", nullptr, &result);
+            RequireScalarDouble(
+                velocity_estimator, "calf_length", "body_adapter.velocity_estimator", nullptr, &result);
+            RequireScalarDouble(
+                velocity_estimator, "accelerometer_variance", "body_adapter.velocity_estimator", nullptr, &result);
+            RequireScalarDouble(
+                velocity_estimator, "sensor_variance", "body_adapter.velocity_estimator", nullptr, &result);
+            RequireScalarDouble(
+                velocity_estimator, "initial_variance", "body_adapter.velocity_estimator", nullptr, &result);
+            RequireScalarInt(
+                velocity_estimator, "moving_window_size", "body_adapter.velocity_estimator", nullptr, &result);
+            RequireScalarDouble(
+                velocity_estimator, "foot_contact_force_threshold", "body_adapter.velocity_estimator", nullptr, &result);
+        }
+    }
 
     RequireScalarString(arm_adapter, "interface", "arm_adapter", nullptr, &result);
     RequireScalarString(arm_adapter, "can_interface", "arm_adapter", nullptr, &result);
@@ -258,6 +295,7 @@ DeployManifest DeployManifestLoader::ParseManifest(const YAML::Node& node)
     const YAML::Node robot = node["robot"];
     const YAML::Node policy = node["policy"];
     const YAML::Node body_adapter = node["body_adapter"];
+    const YAML::Node velocity_estimator = body_adapter["velocity_estimator"];
     const YAML::Node arm_adapter = node["arm_adapter"];
     const YAML::Node coordinator = node["coordinator"];
     const YAML::Node supervisor = node["supervisor"];
@@ -290,6 +328,66 @@ DeployManifest DeployManifestLoader::ParseManifest(const YAML::Node& node)
     RequireScalarInt(body_adapter, "command_rate_hz", "body_adapter", &manifest.body_adapter.command_rate_hz, nullptr);
     RequireScalarBool(body_adapter, "require_lowstate", "body_adapter", &manifest.body_adapter.require_lowstate, nullptr);
     RequireScalarInt(body_adapter, "lowstate_timeout_ms", "body_adapter", &manifest.body_adapter.lowstate_timeout_ms, nullptr);
+    if (body_adapter["enable_velocity_estimation"])
+    {
+        RequireScalarBool(
+            body_adapter,
+            "enable_velocity_estimation",
+            "body_adapter",
+            &manifest.body_adapter.enable_velocity_estimation,
+            nullptr);
+    }
+    if (velocity_estimator)
+    {
+        RequireScalarDouble(
+            velocity_estimator,
+            "hip_length",
+            "body_adapter.velocity_estimator",
+            &manifest.body_adapter.velocity_estimator.hip_length,
+            nullptr);
+        RequireScalarDouble(
+            velocity_estimator,
+            "thigh_length",
+            "body_adapter.velocity_estimator",
+            &manifest.body_adapter.velocity_estimator.thigh_length,
+            nullptr);
+        RequireScalarDouble(
+            velocity_estimator,
+            "calf_length",
+            "body_adapter.velocity_estimator",
+            &manifest.body_adapter.velocity_estimator.calf_length,
+            nullptr);
+        RequireScalarDouble(
+            velocity_estimator,
+            "accelerometer_variance",
+            "body_adapter.velocity_estimator",
+            &manifest.body_adapter.velocity_estimator.accelerometer_variance,
+            nullptr);
+        RequireScalarDouble(
+            velocity_estimator,
+            "sensor_variance",
+            "body_adapter.velocity_estimator",
+            &manifest.body_adapter.velocity_estimator.sensor_variance,
+            nullptr);
+        RequireScalarDouble(
+            velocity_estimator,
+            "initial_variance",
+            "body_adapter.velocity_estimator",
+            &manifest.body_adapter.velocity_estimator.initial_variance,
+            nullptr);
+        RequireScalarInt(
+            velocity_estimator,
+            "moving_window_size",
+            "body_adapter.velocity_estimator",
+            &manifest.body_adapter.velocity_estimator.moving_window_size,
+            nullptr);
+        RequireScalarDouble(
+            velocity_estimator,
+            "foot_contact_force_threshold",
+            "body_adapter.velocity_estimator",
+            &manifest.body_adapter.velocity_estimator.foot_contact_force_threshold,
+            nullptr);
+    }
 
     RequireScalarString(arm_adapter, "interface", "arm_adapter", &manifest.arm_adapter.interface, nullptr);
     RequireScalarString(arm_adapter, "can_interface", "arm_adapter", &manifest.arm_adapter.can_interface, nullptr);
@@ -422,6 +520,58 @@ ValidationResult DeployManifestLoader::ValidateManifest(const DeployManifest& ma
     if (manifest.body_adapter.lowstate_timeout_ms != 50)
     {
         return ValidationResult::Error("body_adapter.lowstate_timeout_ms must be 50", "body_adapter.lowstate_timeout_ms");
+    }
+    if (manifest.body_adapter.enable_velocity_estimation)
+    {
+        const auto& velocity_estimator = manifest.body_adapter.velocity_estimator;
+        if (!IsPositive(velocity_estimator.hip_length))
+        {
+            return ValidationResult::Error(
+                "body_adapter.velocity_estimator.hip_length must be positive",
+                "body_adapter.velocity_estimator.hip_length");
+        }
+        if (!IsPositive(velocity_estimator.thigh_length))
+        {
+            return ValidationResult::Error(
+                "body_adapter.velocity_estimator.thigh_length must be positive",
+                "body_adapter.velocity_estimator.thigh_length");
+        }
+        if (!IsPositive(velocity_estimator.calf_length))
+        {
+            return ValidationResult::Error(
+                "body_adapter.velocity_estimator.calf_length must be positive",
+                "body_adapter.velocity_estimator.calf_length");
+        }
+        if (!IsPositive(velocity_estimator.accelerometer_variance))
+        {
+            return ValidationResult::Error(
+                "body_adapter.velocity_estimator.accelerometer_variance must be positive",
+                "body_adapter.velocity_estimator.accelerometer_variance");
+        }
+        if (!IsPositive(velocity_estimator.sensor_variance))
+        {
+            return ValidationResult::Error(
+                "body_adapter.velocity_estimator.sensor_variance must be positive",
+                "body_adapter.velocity_estimator.sensor_variance");
+        }
+        if (!IsPositive(velocity_estimator.initial_variance))
+        {
+            return ValidationResult::Error(
+                "body_adapter.velocity_estimator.initial_variance must be positive",
+                "body_adapter.velocity_estimator.initial_variance");
+        }
+        if (velocity_estimator.moving_window_size <= 0)
+        {
+            return ValidationResult::Error(
+                "body_adapter.velocity_estimator.moving_window_size must be positive",
+                "body_adapter.velocity_estimator.moving_window_size");
+        }
+        if (!IsPositive(velocity_estimator.foot_contact_force_threshold))
+        {
+            return ValidationResult::Error(
+                "body_adapter.velocity_estimator.foot_contact_force_threshold must be positive",
+                "body_adapter.velocity_estimator.foot_contact_force_threshold");
+        }
     }
 
     if (manifest.arm_adapter.interface != "arx5_sdk")
@@ -808,6 +958,24 @@ std::string DeployManifestLoader::SerializeManifest(const DeployManifest& manife
     oss << "body_adapter.command_rate_hz=" << manifest.body_adapter.command_rate_hz << '\n';
     oss << "body_adapter.require_lowstate=" << (manifest.body_adapter.require_lowstate ? 1 : 0) << '\n';
     oss << "body_adapter.lowstate_timeout_ms=" << manifest.body_adapter.lowstate_timeout_ms << '\n';
+    oss << "body_adapter.enable_velocity_estimation="
+        << (manifest.body_adapter.enable_velocity_estimation ? 1 : 0) << '\n';
+    oss << "body_adapter.velocity_estimator.hip_length="
+        << manifest.body_adapter.velocity_estimator.hip_length << '\n';
+    oss << "body_adapter.velocity_estimator.thigh_length="
+        << manifest.body_adapter.velocity_estimator.thigh_length << '\n';
+    oss << "body_adapter.velocity_estimator.calf_length="
+        << manifest.body_adapter.velocity_estimator.calf_length << '\n';
+    oss << "body_adapter.velocity_estimator.accelerometer_variance="
+        << manifest.body_adapter.velocity_estimator.accelerometer_variance << '\n';
+    oss << "body_adapter.velocity_estimator.sensor_variance="
+        << manifest.body_adapter.velocity_estimator.sensor_variance << '\n';
+    oss << "body_adapter.velocity_estimator.initial_variance="
+        << manifest.body_adapter.velocity_estimator.initial_variance << '\n';
+    oss << "body_adapter.velocity_estimator.moving_window_size="
+        << manifest.body_adapter.velocity_estimator.moving_window_size << '\n';
+    oss << "body_adapter.velocity_estimator.foot_contact_force_threshold="
+        << manifest.body_adapter.velocity_estimator.foot_contact_force_threshold << '\n';
 
     oss << "arm_adapter.interface=" << manifest.arm_adapter.interface << '\n';
     oss << "arm_adapter.can_interface=" << manifest.arm_adapter.can_interface << '\n';

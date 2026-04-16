@@ -21,6 +21,21 @@
 using namespace rl_sar::adapters;
 using namespace rl_sar::protocol;
 
+namespace
+{
+
+bool IsInitializeSuccess(const UnitreeAdapter::Status status)
+{
+    return status == UnitreeAdapter::Status::kOk;
+}
+
+bool IsInitializeFailureFromEnvironment(const UnitreeAdapter::Status status)
+{
+    return status == UnitreeAdapter::Status::kDdsInitFailed;
+}
+
+} // namespace
+
 class UnitreeAdapterContractTest : public ::testing::Test
 {
 protected:
@@ -104,9 +119,20 @@ TEST_F(UnitreeAdapterContractTest, Initialize_DuplicateJointMapping_ReturnsInval
 
 TEST_F(UnitreeAdapterContractTest, Initialize_Twice_ReturnsAlreadyInitialized)
 {
-    adapter_.Initialize(config_);
-    const auto status = adapter_.Initialize(config_);
-    EXPECT_EQ(status, UnitreeAdapter::Status::kAlreadyInitialized);
+    const auto first = adapter_.Initialize(config_);
+    const auto second = adapter_.Initialize(config_);
+
+    if (IsInitializeSuccess(first))
+    {
+        EXPECT_EQ(second, UnitreeAdapter::Status::kAlreadyInitialized);
+        EXPECT_TRUE(adapter_.IsInitialized());
+    }
+    else
+    {
+        EXPECT_TRUE(IsInitializeFailureFromEnvironment(first));
+        EXPECT_EQ(second, UnitreeAdapter::Status::kDdsInitFailed);
+        EXPECT_FALSE(adapter_.IsInitialized());
+    }
 }
 
 // ============================================================================
@@ -121,19 +147,36 @@ TEST_F(UnitreeAdapterContractTest, Start_WithoutInitialize_ReturnsNotInitialized
 
 TEST_F(UnitreeAdapterContractTest, Start_AfterInitialize_ReturnsOkOrNotStarted)
 {
-    adapter_.Initialize(config_);
+    const auto init_status = adapter_.Initialize(config_);
     const auto status = adapter_.Start();
-    // May be kOk if DDS initialized, or kNotStarted if initialization failed
-    EXPECT_TRUE(status == UnitreeAdapter::Status::kOk ||
-                status == UnitreeAdapter::Status::kNotStarted);
+    if (IsInitializeSuccess(init_status))
+    {
+        EXPECT_EQ(status, UnitreeAdapter::Status::kOk);
+    }
+    else
+    {
+        EXPECT_TRUE(IsInitializeFailureFromEnvironment(init_status));
+        EXPECT_EQ(status, UnitreeAdapter::Status::kNotInitialized);
+    }
 }
 
 TEST_F(UnitreeAdapterContractTest, Start_Twice_ReturnsAlreadyStarted)
 {
-    adapter_.Initialize(config_);
-    adapter_.Start();
-    const auto status = adapter_.Start();
-    EXPECT_EQ(status, UnitreeAdapter::Status::kAlreadyStarted);
+    const auto init_status = adapter_.Initialize(config_);
+    const auto first_start = adapter_.Start();
+    const auto second_start = adapter_.Start();
+
+    if (IsInitializeSuccess(init_status))
+    {
+        EXPECT_EQ(first_start, UnitreeAdapter::Status::kOk);
+        EXPECT_EQ(second_start, UnitreeAdapter::Status::kAlreadyStarted);
+    }
+    else
+    {
+        EXPECT_TRUE(IsInitializeFailureFromEnvironment(init_status));
+        EXPECT_EQ(first_start, UnitreeAdapter::Status::kNotInitialized);
+        EXPECT_EQ(second_start, UnitreeAdapter::Status::kNotInitialized);
+    }
 }
 
 TEST_F(UnitreeAdapterContractTest, Stop_AfterStart_IsNotStarted)
@@ -157,16 +200,24 @@ TEST_F(UnitreeAdapterContractTest, SetCommand_BeforeInitialize_ReturnsNotInitial
 
 TEST_F(UnitreeAdapterContractTest, SetCommand_BeforeStart_ReturnsNotStarted)
 {
-    adapter_.Initialize(config_);
+    const auto init_status = adapter_.Initialize(config_);
     BodyCommandFrame cmd;
     const auto status = adapter_.SetCommand(cmd);
-    EXPECT_EQ(status, UnitreeAdapter::Status::kNotStarted);
+    if (IsInitializeSuccess(init_status))
+    {
+        EXPECT_EQ(status, UnitreeAdapter::Status::kNotStarted);
+    }
+    else
+    {
+        EXPECT_TRUE(IsInitializeFailureFromEnvironment(init_status));
+        EXPECT_EQ(status, UnitreeAdapter::Status::kNotInitialized);
+    }
 }
 
 TEST_F(UnitreeAdapterContractTest, SetCommand_AfterStart_ReturnsOk)
 {
-    adapter_.Initialize(config_);
-    adapter_.Start();
+    const auto init_status = adapter_.Initialize(config_);
+    const auto start_status = adapter_.Start();
 
     BodyCommandFrame cmd;
     cmd.joint_count = 12;
@@ -175,15 +226,32 @@ TEST_F(UnitreeAdapterContractTest, SetCommand_AfterStart_ReturnsOk)
     cmd.kd.fill(5.0f);
 
     const auto status = adapter_.SetCommand(cmd);
-    EXPECT_TRUE(status == UnitreeAdapter::Status::kOk ||
-                status == UnitreeAdapter::Status::kNotStarted);
+    if (IsInitializeSuccess(init_status))
+    {
+        EXPECT_EQ(start_status, UnitreeAdapter::Status::kOk);
+        EXPECT_EQ(status, UnitreeAdapter::Status::kOk);
+    }
+    else
+    {
+        EXPECT_TRUE(IsInitializeFailureFromEnvironment(init_status));
+        EXPECT_EQ(start_status, UnitreeAdapter::Status::kNotInitialized);
+        EXPECT_EQ(status, UnitreeAdapter::Status::kNotInitialized);
+    }
 }
 
 TEST_F(UnitreeAdapterContractTest, ProcessCommand_BeforeStart_ReturnsNotStarted)
 {
-    adapter_.Initialize(config_);
+    const auto init_status = adapter_.Initialize(config_);
     const auto status = adapter_.ProcessCommand();
-    EXPECT_EQ(status, UnitreeAdapter::Status::kNotStarted);
+    if (IsInitializeSuccess(init_status))
+    {
+        EXPECT_EQ(status, UnitreeAdapter::Status::kNotStarted);
+    }
+    else
+    {
+        EXPECT_TRUE(IsInitializeFailureFromEnvironment(init_status));
+        EXPECT_EQ(status, UnitreeAdapter::Status::kNotInitialized);
+    }
 }
 
 // ============================================================================
@@ -198,13 +266,20 @@ TEST_F(UnitreeAdapterContractTest, GetState_BeforeInitialize_ReturnsFalse)
 
 TEST_F(UnitreeAdapterContractTest, GetState_AfterInitialize_ReturnsTrueWithDefaultValues)
 {
-    adapter_.Initialize(config_);
+    const auto init_status = adapter_.Initialize(config_);
 
     BodyStateFrame state;
     const bool result = adapter_.GetState(state);
 
-    // Should return true even if no lowstate received yet
-    EXPECT_TRUE(result || !adapter_.IsInitialized());
+    if (IsInitializeSuccess(init_status))
+    {
+        EXPECT_TRUE(result);
+    }
+    else
+    {
+        EXPECT_TRUE(IsInitializeFailureFromEnvironment(init_status));
+        EXPECT_FALSE(result);
+    }
 
     // State should have valid frame header
     if (result)
@@ -217,10 +292,10 @@ TEST_F(UnitreeAdapterContractTest, GetState_AfterInitialize_ReturnsTrueWithDefau
 
 TEST_F(UnitreeAdapterContractTest, IsStateStale_InitialState_ReturnsTrue)
 {
-    adapter_.Initialize(config_);
+    const auto init_status = adapter_.Initialize(config_);
 
     // No state received yet, should be considered stale
-    if (adapter_.IsInitialized())
+    if (IsInitializeSuccess(init_status))
     {
         EXPECT_TRUE(adapter_.IsStateStale());
     }
@@ -228,10 +303,10 @@ TEST_F(UnitreeAdapterContractTest, IsStateStale_InitialState_ReturnsTrue)
 
 TEST_F(UnitreeAdapterContractTest, GetStateAgeUs_InitialState_ReturnsMax)
 {
-    adapter_.Initialize(config_);
+    const auto init_status = adapter_.Initialize(config_);
 
     const uint64_t age = adapter_.GetStateAgeUs();
-    if (adapter_.IsInitialized())
+    if (IsInitializeSuccess(init_status))
     {
         EXPECT_EQ(age, UINT64_MAX);
     }
