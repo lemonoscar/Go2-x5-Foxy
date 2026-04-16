@@ -33,8 +33,10 @@ private:
     Config config_;
     mutable PolicyState policy_state_{};
     mutable trajectory::FallbackSmoother fallback_smoother_;
+    mutable trajectory::FallbackSmoother rl_handover_smoother_;
     mutable Go2X5Supervisor::Mode last_mode_ = Go2X5Supervisor::Mode::Boot;
     mutable bool fallback_plan_active_ = false;
+    mutable bool rl_handover_plan_active_ = false;
 };
 
 }  // namespace rl_sar::runtime::coordinator

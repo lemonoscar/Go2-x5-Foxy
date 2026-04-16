@@ -127,7 +127,7 @@ struct Control
 
     void ClearInput()
     {
-        current_keyboard = last_keyboard;
+        current_keyboard = Input::Keyboard::None;
         current_gamepad = Input::Gamepad::None;
     }
 };

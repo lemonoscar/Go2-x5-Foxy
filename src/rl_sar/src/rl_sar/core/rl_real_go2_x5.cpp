@@ -933,8 +933,8 @@ void RL_Real_Go2X5::InitializeCoordinator()
     }
 
     const auto default_dof_pos = this->GetDefaultDofPos();
-    const auto fixed_kp = this->GetFixedKp();
-    const auto fixed_kd = this->GetFixedKd();
+    const auto rl_kp = this->config_->GetRlKp();
+    const auto rl_kd = this->config_->GetRlKd();
     const auto action_scale = this->config_->GetActionScale();
     const auto torque_limits = this->GetDefaultWholeBodyEffortLimits();
     const int num_dofs = this->GetNumDofs();
@@ -956,9 +956,9 @@ void RL_Real_Go2X5::InitializeCoordinator()
         coordinator_config.safe_stand_q[body_slot] =
             coordinator_config.default_leg_q[body_slot];
         coordinator_config.rl_kp[body_slot] =
-            joint_slot < fixed_kp.size() ? fixed_kp[joint_slot] : 0.0f;
+            joint_slot < rl_kp.size() ? rl_kp[joint_slot] : 0.0f;
         coordinator_config.rl_kd[body_slot] =
-            joint_slot < fixed_kd.size() ? fixed_kd[joint_slot] : 0.0f;
+            joint_slot < rl_kd.size() ? rl_kd[joint_slot] : 0.0f;
 
         float scale_value = 0.0f;
         if (joint_slot < action_scale.size())

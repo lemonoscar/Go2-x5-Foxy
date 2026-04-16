@@ -82,4 +82,4 @@ go2_x5:
   arm_hold_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
   arm_key_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]
   arm_command_smoothing_time: 15.0
-  policy_inference_log_enabled: true
+  policy_inference_log_enabled: false

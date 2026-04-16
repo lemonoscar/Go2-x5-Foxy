@@ -62,23 +62,42 @@ uint64_t ResolvePolicyReceiveTimeNs(const protocol::DogPolicyCommandFrame& frame
     return source_ns;
 }
 
-protocol::BodyCommandFrame MakeSafeStandBodyCommand(const Config& config,
-                                                    const Input& input)
+std::array<float, protocol::kBodyJointCount> DecodePolicyTargetQ(
+    const Config& config,
+    const protocol::DogPolicyCommandFrame& policy_command)
+{
+    std::array<float, protocol::kBodyJointCount> target_q{};
+    for (size_t i = 0; i < protocol::kBodyJointCount; ++i)
+    {
+        target_q[i] = config.default_leg_q[i] + policy_command.leg_action[i] * config.action_scale[i];
+    }
+    return target_q;
+}
+
+protocol::BodyCommandFrame MakeTrackingBodyCommand(
+    const Config& config,
+    const Input& input,
+    const std::array<float, protocol::kBodyJointCount>& target_q,
+    const std::array<float, protocol::kBodyJointCount>& target_dq,
+    bool fallback_generated)
 {
     protocol::BodyCommandFrame frame;
     FillBodyHeader<protocol::kBodyJointCount>(
         &frame, input.mode, input.now_monotonic_ns, input.now_monotonic_ns + config.body_command_expire_ns);
-    frame.header.validity_flags |= protocol::kValidityFallbackGenerated;
+    if (fallback_generated)
+    {
+        frame.header.validity_flags |= protocol::kValidityFallbackGenerated;
+    }
     for (size_t i = 0; i < protocol::kBodyJointCount; ++i)
     {
-        frame.q[i] = config.safe_stand_q[i];
-        frame.dq[i] = 0.0f;
+        frame.q[i] = target_q[i];
+        frame.dq[i] = target_dq[i];
         frame.kp[i] = config.rl_kp[i];
         frame.kd[i] = config.rl_kd[i];
         if (input.has_body_state)
         {
-            const float tau = config.rl_kp[i] * (frame.q[i] - input.body_state.leg_q[i]) -
-                              config.rl_kd[i] * input.body_state.leg_dq[i];
+            const float tau = config.rl_kp[i] * (frame.q[i] - input.body_state.leg_q[i]) +
+                              config.rl_kd[i] * (frame.dq[i] - input.body_state.leg_dq[i]);
             frame.tau[i] = ClampAbs(tau, config.torque_limits, i);
         }
         else
@@ -89,34 +108,20 @@ protocol::BodyCommandFrame MakeSafeStandBodyCommand(const Config& config,
     return frame;
 }
 
+protocol::BodyCommandFrame MakeSafeStandBodyCommand(const Config& config,
+                                                    const Input& input)
+{
+    std::array<float, protocol::kBodyJointCount> target_dq{};
+    return MakeTrackingBodyCommand(config, input, config.safe_stand_q, target_dq, true);
+}
+
 protocol::BodyCommandFrame MakeSmoothedSafeStandBodyCommand(
     const Config& config,
     const Input& input,
     const std::array<float, protocol::kBodyJointCount>& target_q,
     const std::array<float, protocol::kBodyJointCount>& target_dq)
 {
-    protocol::BodyCommandFrame frame;
-    FillBodyHeader<protocol::kBodyJointCount>(
-        &frame, input.mode, input.now_monotonic_ns, input.now_monotonic_ns + config.body_command_expire_ns);
-    frame.header.validity_flags |= protocol::kValidityFallbackGenerated;
-    for (size_t i = 0; i < protocol::kBodyJointCount; ++i)
-    {
-        frame.q[i] = target_q[i];
-        frame.dq[i] = target_dq[i];
-        frame.kp[i] = config.rl_kp[i];
-        frame.kd[i] = config.rl_kd[i];
-        if (input.has_body_state)
-        {
-            const float tau = config.rl_kp[i] * (frame.q[i] - input.body_state.leg_q[i]) -
-                              config.rl_kd[i] * (frame.dq[i] - input.body_state.leg_dq[i]);
-            frame.tau[i] = ClampAbs(tau, config.torque_limits, i);
-        }
-        else
-        {
-            frame.tau[i] = 0.0f;
-        }
-    }
-    return frame;
+    return MakeTrackingBodyCommand(config, input, target_q, target_dq, true);
 }
 
 protocol::ArmCommandFrame MakeHoldArmCommand(const Config& config, const Input& input)
@@ -160,6 +165,7 @@ bool CanUseArmCommand(const Input& input)
 HybridMotionCoordinator::HybridMotionCoordinator(Config config)
     : config_(std::move(config))
     , fallback_smoother_(config_.fallback_smoother)
+    , rl_handover_smoother_(config_.fallback_smoother)
 {
 }
 
@@ -213,6 +219,16 @@ Output HybridMotionCoordinator::Step(const Input& input) const
         fallback_smoother_.Reset();
         fallback_plan_active_ = false;
     }
+    if (input.mode != Go2X5Supervisor::Mode::RlDogOnlyActive)
+    {
+        rl_handover_smoother_.Reset();
+        rl_handover_plan_active_ = false;
+    }
+    else if (entering_new_mode)
+    {
+        rl_handover_smoother_.Reset();
+        rl_handover_plan_active_ = false;
+    }
     last_mode_ = input.mode;
 
     switch (input.mode)
@@ -243,30 +259,31 @@ Output HybridMotionCoordinator::Step(const Input& input) const
     case Go2X5Supervisor::Mode::RlDogOnlyActive:
         if (policy_state_.valid && policy_state_.cmd.action_dim == protocol::kDogJointCount)
         {
-            FillBodyHeader<protocol::kBodyJointCount>(
-                &output.body_command,
-                input.mode,
-                input.now_monotonic_ns,
-                input.now_monotonic_ns + config_.body_command_expire_ns);
-            for (size_t i = 0; i < protocol::kBodyJointCount; ++i)
+            const auto decoded_target_q = DecodePolicyTargetQ(config_, policy_state_.cmd);
+            std::array<float, protocol::kBodyJointCount> target_q = decoded_target_q;
+            std::array<float, protocol::kBodyJointCount> target_dq{};
+
+            if (!rl_handover_plan_active_)
             {
-                const float target_q =
-                    config_.default_leg_q[i] + policy_state_.cmd.leg_action[i] * config_.action_scale[i];
-                output.body_command.q[i] = target_q;
-                output.body_command.dq[i] = 0.0f;
-                output.body_command.kp[i] = config_.rl_kp[i];
-                output.body_command.kd[i] = config_.rl_kd[i];
-                if (input.has_body_state)
-                {
-                    const float tau = config_.rl_kp[i] * (target_q - input.body_state.leg_q[i]) -
-                                      config_.rl_kd[i] * input.body_state.leg_dq[i];
-                    output.body_command.tau[i] = ClampAbs(tau, config_.torque_limits, i);
-                }
-                else
-                {
-                    output.body_command.tau[i] = 0.0f;
-                }
+                const auto current_q = input.has_body_state ? input.body_state.leg_q : config_.default_leg_q;
+                const float handover_duration_sec =
+                    static_cast<float>(config_.rl_handover_duration_ns) / 1e9f;
+                rl_handover_smoother_.Plan(
+                    current_q, decoded_target_q, input.now_monotonic_ns, handover_duration_sec);
+                rl_handover_plan_active_ = true;
             }
+
+            if (rl_handover_smoother_.IsActive(input.now_monotonic_ns))
+            {
+                target_q = rl_handover_smoother_.GetTargetPosition(input.now_monotonic_ns);
+                target_dq = rl_handover_smoother_.GetTargetVelocity(input.now_monotonic_ns);
+            }
+            else
+            {
+                rl_handover_plan_active_ = false;
+            }
+            output.body_command =
+                MakeTrackingBodyCommand(config_, input, target_q, target_dq, false);
             output.body_command_valid = true;
             output.policy_applied = true;
             output.policy_is_fresh = policy_is_fresh;

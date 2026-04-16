@@ -78,7 +78,7 @@ int main()
     RequireContains(config_content, "arm_bridge_shadow_feedback_enabled: false", config_file);
     RequireContains(config_content, "arm_hold_enabled: false", config_file);
     RequireContains(config_content, "arm_hold_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]", config_file);
-    RequireContains(config_content, "arm_key_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]", config_file);
+    RequireContains(config_content, "arm_key_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]", config_file);
     RequireNotContains(config_content, "cmd_vel_alpha:", config_file);
     RequireNotContains(config_content, "key1_prefer_navigation_mode:", config_file);
     RequireNotContains(config_content, "key1_publish_cmd_vel_on_navigation:", config_file);

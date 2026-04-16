@@ -154,17 +154,13 @@ void RL::StateController(const RobotState<float>* state, RobotCommand<float>* co
                         this->fsm.current_state_->GetStateName().find("RLLocomotion") != std::string::npos);
     if (Go2X5OperatorControl::ShouldTriggerKey1(this->control, this->robot_name, in_rl))
     {
-        Go2X5OperatorControl::ApplyFixedCommand(
-            &this->control,
-            go2_x5_operator_config,
-            exclusive_go2_x5_control ? 0.0f : 0.6f,
-            0.0f,
-            0.0f);
+        this->control.x = 0.0f;
+        this->control.y = 0.0f;
+        this->control.yaw = 0.0f;
         std::cout << std::endl << LOGGER::INFO
-                  << "Key[1] pressed: fixed RL command x=" << this->control.x
+                  << "Key[1] pressed: RL handover command x=" << this->control.x
                   << " y=" << this->control.y
                   << " yaw=" << this->control.yaw
-                  << (exclusive_go2_x5_control ? " (exclusive real deploy control)" : "")
                   << std::endl;
         this->control.last_keyboard = Input::Keyboard::Num1;
     }

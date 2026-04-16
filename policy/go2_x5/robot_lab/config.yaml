@@ -80,8 +80,8 @@ go2_x5/robot_lab:
   init_base_height: 0.45
   # Real deployment: keyboard triggers only, no handheld/cmd_vel competition.
   real_deploy_exclusive_keyboard_control: true
-  # Print current policy inference frequency during RL execution.
-  policy_inference_log_enabled: true
+  # Disable high-frequency inference logs during real deployment.
+  policy_inference_log_enabled: false
 
   # Arm command settings
   arm_command_size: 6

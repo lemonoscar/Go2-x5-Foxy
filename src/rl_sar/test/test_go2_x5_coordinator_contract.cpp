@@ -160,12 +160,45 @@ void TestRlActiveDecodesDogOnlyBody()
     Require(
         (output.body_command.header.validity_flags & rl_sar::protocol::kValidityFallbackGenerated) == 0u,
         "RL active policy body command must not be marked as fallback");
-    Require(output.body_command.q[0] > 0.0f, "body target q should be decoded from policy");
+    RequireNear(output.body_command.q[0], input.body_state.leg_q[0], 1e-5f,
+                "first RL command should start from the current body pose");
     Require(output.body_command.kp[0] == 20.0f, "body kp should come from coordinator config");
     Require(output.policy_is_fresh, "fresh policy sample should be marked fresh");
     Require(output.current_cmd_from_fresh_sample, "new policy sample should be marked as fresh sample");
     Require(output.policy_seq == 20, "policy sequence should propagate");
     Require(output.policy_age_ns == 0, "fresh policy age should be zero at receive time");
+}
+
+void TestRlActiveUsesSmoothedHandover()
+{
+    HybridMotionCoordinator coordinator(MakeConfig());
+    Input input;
+    input.now_monotonic_ns = 6'000'000ULL;
+    input.mode = Mode::RlDogOnlyActive;
+    input.has_body_state = true;
+    input.body_state = MakeBodyState();
+    input.has_policy_command = true;
+    input.dog_policy_command = MakePolicyCommand(input.now_monotonic_ns);
+
+    const auto start = coordinator.Step(input);
+    RequireNear(start.body_command.q[0], input.body_state.leg_q[0], 1e-5f,
+                "handover should start from the current pose");
+
+    const float decoded_target_q =
+        coordinator.config().default_leg_q[0] +
+        input.dog_policy_command.leg_action[0] * coordinator.config().action_scale[0];
+
+    input.now_monotonic_ns += 100'000'000ULL;
+    const auto mid = coordinator.Step(input);
+    Require(mid.body_command.q[0] > input.body_state.leg_q[0],
+            "handover should move away from the current pose");
+    Require(mid.body_command.q[0] < decoded_target_q,
+            "handover should not jump straight to the policy target");
+
+    input.now_monotonic_ns += 600'000'000ULL;
+    const auto done = coordinator.Step(input);
+    RequireNear(done.body_command.q[0], decoded_target_q, 1e-4f,
+                "handover should converge to the policy target");
 }
 
 void TestExpiredArmCommandRejected()
@@ -269,6 +302,7 @@ int main()
     TestReadyOnlyAllowsArm();
     TestManualArmHoldsBodyAndPassesArm();
     TestRlActiveDecodesDogOnlyBody();
+    TestRlActiveUsesSmoothedHandover();
     TestExpiredArmCommandRejected();
     TestDegradedArmForcesHold();
     TestPolicyFreshnessTracksHeldSample();

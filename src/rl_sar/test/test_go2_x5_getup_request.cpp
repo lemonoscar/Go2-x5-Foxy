@@ -80,6 +80,16 @@ TEST(Go2X5GetUpRequestTest, KeyZeroTransitionsIntoGetUpEvenAfterInputClears)
     EXPECT_EQ(rl.fsm.current_state_->GetStateName(), "RLFSMStateGetUp");
 }
 
+TEST(Go2X5GetUpRequestTest, ClearInputDropsKeyboardLatch)
+{
+    Control control;
+    control.SetKeyboard(Input::Keyboard::Num1);
+    control.ClearInput();
+
+    EXPECT_EQ(control.current_keyboard, Input::Keyboard::None);
+    EXPECT_EQ(control.current_gamepad, Input::Gamepad::None);
+}
+
 TEST(Go2X5GetUpRequestTest, EnterRlRequestPersistsUntilGetUpCompletes)
 {
     TestRL rl;
@@ -128,6 +138,26 @@ TEST(Go2X5GetUpRequestTest, RlLocomotionEnterStaysInRlWhenInitSucceeds)
     EXPECT_EQ(rl.last_init_rl_path, "go2_x5/robot_lab");
     EXPECT_TRUE(rl.rl_init_done);
     EXPECT_EQ(rl.fsm.mode_, FSM::Mode::NORMAL);
+}
+
+TEST(Go2X5GetUpRequestTest, KeyOneDoesNotInjectForwardVelocityOnRlEntryRequest)
+{
+    TestRL rl;
+    ConfigureTestRl(&rl);
+
+    auto fsm = FSMManager::GetInstance().CreateFSM("go2_x5", &rl);
+    ASSERT_NE(fsm, nullptr);
+    rl.fsm = *fsm;
+    rl.control.x = 0.6f;
+    rl.control.y = -0.2f;
+    rl.control.yaw = 0.1f;
+
+    rl.EnqueueKeyboardInput(Input::Keyboard::Num1);
+    rl.StateController(&rl.robot_state, &rl.robot_command);
+
+    EXPECT_FLOAT_EQ(rl.control.x, 0.0f);
+    EXPECT_FLOAT_EQ(rl.control.y, 0.0f);
+    EXPECT_FLOAT_EQ(rl.control.yaw, 0.0f);
 }
 
 TEST(Go2X5GetUpRequestTest, RlLocomotionEnterFallsBackToPassiveWhenInitFails)
