@@ -431,7 +431,12 @@ private:
             this->validation_errors_.push_back("observations must be present once policy runtime config is loaded");
         }
 
-        detail::ValidateSequenceSize(this->merged_node_, "action_scale", static_cast<size_t>(num_of_dofs), &this->validation_errors_);
+        const int leg_action_dim = std::max(0, num_of_dofs - arm_joint_count);
+        detail::ValidateSequenceSize(
+            this->merged_node_,
+            "action_scale",
+            static_cast<size_t>(leg_action_dim),
+            &this->validation_errors_);
         detail::ValidateSequenceSize(this->merged_node_, "rl_kp", static_cast<size_t>(num_of_dofs), &this->validation_errors_);
         detail::ValidateSequenceSize(this->merged_node_, "rl_kd", static_cast<size_t>(num_of_dofs), &this->validation_errors_);
     }
