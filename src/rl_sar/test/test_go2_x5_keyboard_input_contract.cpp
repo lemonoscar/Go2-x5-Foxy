@@ -96,6 +96,7 @@ int main()
     RequireContains(core_content, "if (IsPassiveBodyOutputMode(mode))", core_file.string());
     RequireContains(core_content, "input.operator_enable = rl_active_requested;", core_file.string());
     RequireContains(core_content, "input.manual_arm_request = this->operator_manual_arm_requested_.load", core_file.string());
+    RequireContains(core_content, "this->supervisor_->NoteHeartbeat(input.now_monotonic_ns);", core_file.string());
     RequireContains(core_content, "[SupervisorInput] source=keyboard:Num2 reason=manual_arm_request", core_file.string());
     RequireContains(core_content, "[SupervisorInput] source=keyboard:Num3 reason=manual_arm_request", core_file.string());
     RequireNotContains(core_content, "navigation_mode", core_file.string());

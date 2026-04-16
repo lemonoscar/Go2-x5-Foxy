@@ -2136,6 +2136,7 @@ void RL_Real_Go2X5::RefreshSupervisorState(const char* source)
         }
 
         input = this->BuildSupervisorInput();
+        this->supervisor_->NoteHeartbeat(input.now_monotonic_ns);
         result = this->supervisor_->Step(input);
         supervisor_config = this->supervisor_->config();
     }
