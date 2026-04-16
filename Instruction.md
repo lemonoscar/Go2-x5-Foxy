@@ -23,7 +23,7 @@ echo $ROS_DISTRO
 ```bash
 export ARX5_SDK_ROOT=~/arx5-sdk
 export ARX5_SDK_LIB_PATH=$ARX5_SDK_ROOT/lib/aarch64
-export UNITREE_SDK2_ROOT=~/unitree_sdk2
+export UNITREE_SDK2_ROOT=~/Desktop/unitree_sdk2
 export LD_LIBRARY_PATH=$ARX5_SDK_LIB_PATH:$LD_LIBRARY_PATH
 ```
 
@@ -45,6 +45,7 @@ ip -details link show can0
 
 ```bash
 cd ~/rl_ras_n
+git pull
 ./build.sh
 source ~/rl_ras_n/install/setup.bash
 ```
@@ -58,7 +59,7 @@ source /opt/ros/foxy/setup.bash
 source ~/rl_ras_n/install/setup.bash
 export ARX5_SDK_ROOT=~/arx5-sdk
 export ARX5_SDK_LIB_PATH=$ARX5_SDK_ROOT/lib/aarch64
-export UNITREE_SDK2_ROOT=~/unitree_sdk2
+export UNITREE_SDK2_ROOT=~/Desktop/unitree_sdk2
 export LD_LIBRARY_PATH=$ARX5_SDK_LIB_PATH:$LD_LIBRARY_PATH
 
 ros2 launch rl_sar go2_x5_real_dual.launch.py \

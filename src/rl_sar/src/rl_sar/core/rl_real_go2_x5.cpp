@@ -2944,10 +2944,10 @@ void RL_Real_Go2X5::MaybeRunStartupSequence()
         elapsed_sec >= this->startup_sequence_get_up_delay_sec_)
     {
         this->startup_sequence_get_up_sent_ = true;
-        this->control.SetKeyboard(Input::Keyboard::Num0);
+        this->RequestGetUp();
         std::cout << LOGGER::INFO
                   << "[StartupSequence] t=" << elapsed_sec
-                  << "s trigger=keyboard:Num0"
+                  << "s trigger=request:get_up"
                   << std::endl;
     }
 
@@ -2960,10 +2960,10 @@ void RL_Real_Go2X5::MaybeRunStartupSequence()
         body_left_passive)
     {
         this->startup_sequence_rl_sent_ = true;
-        this->control.SetKeyboard(Input::Keyboard::Num1);
+        this->RequestEnterRl();
         std::cout << LOGGER::INFO
                   << "[StartupSequence] t=" << elapsed_sec
-                  << "s trigger=keyboard:Num1"
+                  << "s trigger=request:enter_rl"
                   << std::endl;
     }
 }

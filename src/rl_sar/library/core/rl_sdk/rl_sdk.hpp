@@ -12,6 +12,7 @@
 #include <fstream>
 #include <mutex>
 #include <atomic>
+#include <deque>
 
 #include <yaml-cpp/yaml.h>
 #include "fsm.hpp"
@@ -204,7 +205,7 @@ public:
     void InitObservations();
     void InitOutputs();
     void InitControl();
-    void InitRL(std::string robot_config_path);
+    virtual void InitRL(std::string robot_config_path);
     void InitJointNum(size_t num_joints);
 
     // rl functions
@@ -226,7 +227,23 @@ public:
     // control
     Control control;
     void KeyboardInterface();
-    std::atomic<Input::Keyboard> pending_keyboard_input{Input::Keyboard::None};
+    void EnqueueKeyboardInput(Input::Keyboard keyboard);
+    Input::Keyboard ConsumePendingKeyboardInput();
+    size_t PendingKeyboardInputCount();
+    void RequestGetUp();
+    bool ConsumeGetUpRequest();
+    void RequestEnterRl();
+    bool ConsumeEnterRlRequest();
+    void RequestGetDown();
+    bool ConsumeGetDownRequest();
+    void RequestPassive();
+    bool ConsumePassiveRequest();
+    std::deque<Input::Keyboard> pending_keyboard_inputs_;
+    std::mutex pending_keyboard_input_mutex_;
+    bool pending_get_up_request_ = false;
+    bool pending_enter_rl_request_ = false;
+    bool pending_get_down_request_ = false;
+    bool pending_passive_request_ = false;
 
     // history buffer
     ObservationBuffer history_obs_buf;

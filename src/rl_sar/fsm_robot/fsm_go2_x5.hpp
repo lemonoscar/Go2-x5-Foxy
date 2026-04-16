@@ -36,7 +36,7 @@ public:
 
     std::string CheckChange() override
     {
-        if (rl.control.current_keyboard == Input::Keyboard::Num0 || rl.control.current_gamepad == Input::Gamepad::A)
+        if (rl.ConsumeGetUpRequest())
         {
             return "RLFSMStateGetUp";
         }
@@ -95,17 +95,17 @@ public:
 
     std::string CheckChange() override
     {
-        if (rl.control.current_keyboard == Input::Keyboard::P || rl.control.current_gamepad == Input::Gamepad::LB_X)
+        if (rl.ConsumePassiveRequest())
         {
             return "RLFSMStatePassive";
         }
         if (percent_getup >= 1.0f)
         {
-            if (rl.control.current_keyboard == Input::Keyboard::Num1 || rl.control.current_gamepad == Input::Gamepad::RB_DPadUp)
+            if (rl.ConsumeEnterRlRequest())
             {
                 return "RLFSMStateRLLocomotion";
             }
-            else if (rl.control.current_keyboard == Input::Keyboard::Num9 || rl.control.current_gamepad == Input::Gamepad::B)
+            else if (rl.ConsumeGetDownRequest())
             {
                 return "RLFSMStateGetDown";
             }
@@ -136,11 +136,11 @@ public:
 
     std::string CheckChange() override
     {
-        if (rl.control.current_keyboard == Input::Keyboard::P || rl.control.current_gamepad == Input::Gamepad::LB_X || percent_getdown >= 1.0f)
+        if (rl.ConsumePassiveRequest() || percent_getdown >= 1.0f)
         {
             return "RLFSMStatePassive";
         }
-        else if (rl.control.current_keyboard == Input::Keyboard::Num0 || rl.control.current_gamepad == Input::Gamepad::A)
+        else if (rl.ConsumeGetUpRequest())
         {
             return "RLFSMStateGetUp";
         }
@@ -228,19 +228,19 @@ public:
 
     std::string CheckChange() override
     {
-        if (rl.control.current_keyboard == Input::Keyboard::P || rl.control.current_gamepad == Input::Gamepad::LB_X)
+        if (rl.ConsumePassiveRequest())
         {
             return "RLFSMStatePassive";
         }
-        else if (rl.control.current_keyboard == Input::Keyboard::Num9 || rl.control.current_gamepad == Input::Gamepad::B)
+        else if (rl.ConsumeGetDownRequest())
         {
             return "RLFSMStateGetDown";
         }
-        else if (rl.control.current_keyboard == Input::Keyboard::Num0 || rl.control.current_gamepad == Input::Gamepad::A)
+        else if (rl.ConsumeGetUpRequest())
         {
             return "RLFSMStateGetUp";
         }
-        else if (rl.control.current_keyboard == Input::Keyboard::Num1 || rl.control.current_gamepad == Input::Gamepad::RB_DPadUp)
+        else if (rl.ConsumeEnterRlRequest())
         {
             return "RLFSMStateRLLocomotion";
         }

@@ -78,8 +78,7 @@ std::string DescribeKeyboardByte(const int value)
 
 void RL::StateController(const RobotState<float>* state, RobotCommand<float>* command)
 {
-    const auto pending_keyboard =
-        this->pending_keyboard_input.exchange(Input::Keyboard::None, std::memory_order_acq_rel);
+    const auto pending_keyboard = this->ConsumePendingKeyboardInput();
     if (pending_keyboard != Input::Keyboard::None)
     {
         this->control.SetKeyboard(pending_keyboard);
@@ -88,6 +87,27 @@ void RL::StateController(const RobotState<float>* state, RobotCommand<float>* co
                   << " current=" << KeyboardName(this->control.current_keyboard)
                   << " last=" << KeyboardName(this->control.last_keyboard)
                   << std::endl;
+    }
+
+    if (this->control.current_keyboard == Input::Keyboard::Num0 ||
+        this->control.current_gamepad == Input::Gamepad::A)
+    {
+        this->RequestGetUp();
+    }
+    if (this->control.current_keyboard == Input::Keyboard::Num1 ||
+        this->control.current_gamepad == Input::Gamepad::RB_DPadUp)
+    {
+        this->RequestEnterRl();
+    }
+    if (this->control.current_keyboard == Input::Keyboard::Num9 ||
+        this->control.current_gamepad == Input::Gamepad::B)
+    {
+        this->RequestGetDown();
+    }
+    if (this->control.current_keyboard == Input::Keyboard::P ||
+        this->control.current_gamepad == Input::Gamepad::LB_X)
+    {
+        this->RequestPassive();
     }
 
     const auto go2_x5_operator_config =
@@ -149,6 +169,85 @@ void RL::StateController(const RobotState<float>* state, RobotCommand<float>* co
         this->control.last_keyboard = Input::Keyboard::Num1;
     }
 }
+
+void RL::EnqueueKeyboardInput(const Input::Keyboard keyboard)
+{
+    if (keyboard == Input::Keyboard::None)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(this->pending_keyboard_input_mutex_);
+    this->pending_keyboard_inputs_.push_back(keyboard);
+}
+
+Input::Keyboard RL::ConsumePendingKeyboardInput()
+{
+    std::lock_guard<std::mutex> lock(this->pending_keyboard_input_mutex_);
+    if (this->pending_keyboard_inputs_.empty())
+    {
+        return Input::Keyboard::None;
+    }
+
+    const auto keyboard = this->pending_keyboard_inputs_.front();
+    this->pending_keyboard_inputs_.pop_front();
+    return keyboard;
+}
+
+size_t RL::PendingKeyboardInputCount()
+{
+    std::lock_guard<std::mutex> lock(this->pending_keyboard_input_mutex_);
+    return this->pending_keyboard_inputs_.size();
+}
+
+void RL::RequestGetUp()
+{
+    this->pending_get_up_request_ = true;
+}
+
+bool RL::ConsumeGetUpRequest()
+{
+    const bool requested = this->pending_get_up_request_;
+    this->pending_get_up_request_ = false;
+    return requested;
+}
+
+void RL::RequestEnterRl()
+{
+    this->pending_enter_rl_request_ = true;
+}
+
+bool RL::ConsumeEnterRlRequest()
+{
+    const bool requested = this->pending_enter_rl_request_;
+    this->pending_enter_rl_request_ = false;
+    return requested;
+}
+
+void RL::RequestGetDown()
+{
+    this->pending_get_down_request_ = true;
+}
+
+bool RL::ConsumeGetDownRequest()
+{
+    const bool requested = this->pending_get_down_request_;
+    this->pending_get_down_request_ = false;
+    return requested;
+}
+
+void RL::RequestPassive()
+{
+    this->pending_passive_request_ = true;
+}
+
+bool RL::ConsumePassiveRequest()
+{
+    const bool requested = this->pending_passive_request_;
+    this->pending_passive_request_ = false;
+    return requested;
+}
+
 std::vector<float> RL::ComputeObservation()
 {
     std::vector<std::vector<float>> obs_list;
@@ -518,12 +617,12 @@ void RL::AttitudeProtect(const std::vector<float> &quaternion, float pitch_thres
 
     if (std::fabs(roll) > roll_threshold)
     {
-        this->control.SetKeyboard(Input::Keyboard::P);
+        this->RequestPassive();
         std::cout << LOGGER::WARNING << "Roll exceeds " << roll_threshold << " degrees. Current: " << roll << " degrees." << std::endl;
     }
     if (std::fabs(pitch) > pitch_threshold)
     {
-        this->control.SetKeyboard(Input::Keyboard::P);
+        this->RequestPassive();
         std::cout << LOGGER::WARNING << "Pitch exceeds " << pitch_threshold << " degrees. Current: " << pitch << " degrees." << std::endl;
     }
 }
@@ -762,7 +861,7 @@ void RL::KeyboardInterface()
                       << "[KeyboardInput] raw=" << DescribeKeyboardByte(c)
                       << " mapped=" << KeyboardName(keyboard_event)
                       << std::endl;
-            this->pending_keyboard_input.store(keyboard_event, std::memory_order_release);
+            this->EnqueueKeyboardInput(keyboard_event);
         }
         else
         {

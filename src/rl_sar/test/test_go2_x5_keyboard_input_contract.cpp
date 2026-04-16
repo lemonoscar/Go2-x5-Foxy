@@ -74,12 +74,14 @@ int main()
         rl_sdk_file.string());
     RequireContains(
         content,
-        "pending_keyboard_input.exchange(Input::Keyboard::None, std::memory_order_acq_rel)",
+        "this->ConsumePendingKeyboardInput()",
         rl_sdk_file.string());
     RequireContains(
         content,
-        "this->pending_keyboard_input.store(keyboard_event, std::memory_order_release);",
+        "this->EnqueueKeyboardInput(keyboard_event);",
         rl_sdk_file.string());
+    RequireContains(content, "pending_keyboard_inputs_.push_back(keyboard);", rl_sdk_file.string());
+    RequireContains(content, "pending_keyboard_inputs_.pop_front();", rl_sdk_file.string());
     RequireContains(content, "case Input::Keyboard::Num0:", rl_sdk_file.string());
     RequireContains(content, "case Input::Keyboard::Num1:", rl_sdk_file.string());
     RequireContains(content, "case Input::Keyboard::Num2:", rl_sdk_file.string());
