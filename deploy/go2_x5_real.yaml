@@ -34,7 +34,7 @@ policy:
   action_dim: 12
   observation_dim: 260
   policy_rate_hz: 50
-  model_path: "policy.onnx"
+  model_path: "policy/go2_x5/robot_lab/policy.onnx"
   enable_arm_tracking_error_obs: false
   enable_arm_command_delta_obs: false
 
