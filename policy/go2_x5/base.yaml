@@ -79,7 +79,7 @@ go2_x5:
   arm_command_size: 6
   arm_joint_command_topic: "/arm_joint_pos_cmd"
   arm_hold_enabled: true
-  arm_hold_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]
+  arm_hold_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
   arm_key_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]
   arm_command_smoothing_time: 15.0
   policy_inference_log_enabled: true

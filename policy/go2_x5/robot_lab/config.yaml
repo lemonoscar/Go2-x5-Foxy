@@ -107,7 +107,7 @@ go2_x5/robot_lab:
   # When arm pose command is active (Key[2]), lock base pose to avoid spinning
   arm_lock_base_on_pose: false
   # Fixed arm hold pose (used as RL command + joint hold)
-  arm_hold_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]
+  arm_hold_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
   arm_command_smoothing_time: 15.0
   # MuJoCo arm output filter (EMA). Smaller = smoother.
   arm_output_filter_alpha: 0.02
