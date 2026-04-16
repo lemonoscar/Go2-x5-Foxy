@@ -35,13 +35,13 @@ bool RL_Real_Go2X5::ShouldActuateArmForMode(const Go2X5Supervisor::Mode mode) co
 {
     switch (mode)
     {
-    case Go2X5Supervisor::Mode::Ready:
     case Go2X5Supervisor::Mode::RlDogOnlyActive:
     case Go2X5Supervisor::Mode::ManualArm:
         return true;
     case Go2X5Supervisor::Mode::Boot:
     case Go2X5Supervisor::Mode::Probe:
     case Go2X5Supervisor::Mode::Passive:
+    case Go2X5Supervisor::Mode::Ready:
     case Go2X5Supervisor::Mode::DegradedArm:
     case Go2X5Supervisor::Mode::DegradedBody:
     case Go2X5Supervisor::Mode::SoftStop:

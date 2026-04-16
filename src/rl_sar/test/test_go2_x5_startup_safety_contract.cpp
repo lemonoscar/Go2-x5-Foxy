@@ -117,6 +117,7 @@ int main()
     RequireContains(utility_content, "bool RL_Real_Go2X5::ShouldActuateArmForMode", utility_file.string());
     RequireContains(utility_content, "case Go2X5Supervisor::Mode::ManualArm:", utility_file.string());
     RequireContains(utility_content, "case Go2X5Supervisor::Mode::RlDogOnlyActive:", utility_file.string());
+    RequireNotContains(utility_content, "case Go2X5Supervisor::Mode::Ready:\n        return true;", utility_file.string());
     RequireContains(utility_content, "bool RL_Real_Go2X5::ShouldExecuteActiveShutdown()", utility_file.string());
 
     const std::string state_io_content = ReadAll(state_io_file.string());
@@ -127,7 +128,7 @@ int main()
         "this->arm_safe_shutdown_active.load() || this->ShouldActuateArmForMode(supervisor_mode);",
         state_io_file.string());
     RequireContains(state_io_content, "Arm command suppressed in supervisor mode", state_io_file.string());
-    RequireContains(state_io_content, "Waiting for Ready, ManualArm, or RlDogOnlyActive.", state_io_file.string());
+    RequireContains(state_io_content, "Waiting for ManualArm or RlDogOnlyActive.", state_io_file.string());
     RequireNotContains(
         state_io_content,
         "const bool allow_passthrough =",

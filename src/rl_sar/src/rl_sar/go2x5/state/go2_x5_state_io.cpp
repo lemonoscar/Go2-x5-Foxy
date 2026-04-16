@@ -117,7 +117,7 @@ void RL_Real_Go2X5::WriteArmCommandFrameToExternal(const rl_sar::protocol::ArmCo
             std::cout << LOGGER::INFO
                       << "Arm command suppressed in supervisor mode "
                       << Go2X5Supervisor::ToString(supervisor_mode)
-                      << ". Waiting for Ready, ManualArm, or RlDogOnlyActive."
+                      << ". Waiting for ManualArm or RlDogOnlyActive."
                       << std::endl;
         }
         return;
