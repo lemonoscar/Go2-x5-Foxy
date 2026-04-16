@@ -1,6 +1,80 @@
 #include <cerrno>
+#include <cctype>
+#include <sstream>
 #include "rl_sdk.hpp"
 #include "rl_sar/go2x5/control/go2_x5_operator_control.hpp"
+
+namespace
+{
+
+const char* KeyboardName(const Input::Keyboard key)
+{
+    switch (key)
+    {
+    case Input::Keyboard::None: return "None";
+    case Input::Keyboard::A: return "A";
+    case Input::Keyboard::B: return "B";
+    case Input::Keyboard::C: return "C";
+    case Input::Keyboard::D: return "D";
+    case Input::Keyboard::E: return "E";
+    case Input::Keyboard::F: return "F";
+    case Input::Keyboard::G: return "G";
+    case Input::Keyboard::H: return "H";
+    case Input::Keyboard::I: return "I";
+    case Input::Keyboard::J: return "J";
+    case Input::Keyboard::K: return "K";
+    case Input::Keyboard::L: return "L";
+    case Input::Keyboard::M: return "M";
+    case Input::Keyboard::N: return "N";
+    case Input::Keyboard::O: return "O";
+    case Input::Keyboard::P: return "P";
+    case Input::Keyboard::Q: return "Q";
+    case Input::Keyboard::R: return "R";
+    case Input::Keyboard::S: return "S";
+    case Input::Keyboard::T: return "T";
+    case Input::Keyboard::U: return "U";
+    case Input::Keyboard::V: return "V";
+    case Input::Keyboard::W: return "W";
+    case Input::Keyboard::X: return "X";
+    case Input::Keyboard::Y: return "Y";
+    case Input::Keyboard::Z: return "Z";
+    case Input::Keyboard::Num0: return "Num0";
+    case Input::Keyboard::Num1: return "Num1";
+    case Input::Keyboard::Num2: return "Num2";
+    case Input::Keyboard::Num3: return "Num3";
+    case Input::Keyboard::Num4: return "Num4";
+    case Input::Keyboard::Num5: return "Num5";
+    case Input::Keyboard::Num6: return "Num6";
+    case Input::Keyboard::Num7: return "Num7";
+    case Input::Keyboard::Num8: return "Num8";
+    case Input::Keyboard::Num9: return "Num9";
+    case Input::Keyboard::Space: return "Space";
+    case Input::Keyboard::Enter: return "Enter";
+    case Input::Keyboard::Escape: return "Escape";
+    case Input::Keyboard::Up: return "Up";
+    case Input::Keyboard::Down: return "Down";
+    case Input::Keyboard::Left: return "Left";
+    case Input::Keyboard::Right: return "Right";
+    }
+    return "Unknown";
+}
+
+std::string DescribeKeyboardByte(const int value)
+{
+    std::ostringstream oss;
+    oss << "0x" << std::hex << std::uppercase << value;
+    if (value >= 0 && value <= 255)
+    {
+        const unsigned char ch = static_cast<unsigned char>(value);
+        if (std::isprint(ch))
+        {
+            oss << "('" << static_cast<char>(ch) << "')";
+        }
+    }
+    return oss.str();
+}
+
+} // namespace
 
 void RL::StateController(const RobotState<float>* state, RobotCommand<float>* command)
 {
@@ -9,6 +83,11 @@ void RL::StateController(const RobotState<float>* state, RobotCommand<float>* co
     if (pending_keyboard != Input::Keyboard::None)
     {
         this->control.SetKeyboard(pending_keyboard);
+        std::cout << LOGGER::INFO
+                  << "[KeyboardInput] delivered=" << KeyboardName(pending_keyboard)
+                  << " current=" << KeyboardName(this->control.current_keyboard)
+                  << " last=" << KeyboardName(this->control.last_keyboard)
+                  << std::endl;
     }
 
     const auto go2_x5_operator_config =
@@ -526,30 +605,29 @@ int AcquireKeyboardFd()
         return state.fd;
     }
 
-    const int tty_fd = open("/dev/tty", O_RDONLY | O_NONBLOCK);
-    if (tty_fd >= 0 && isatty(tty_fd) && ConfigureKeyboardFd(tty_fd, &state.original_term))
+    if (isatty(STDIN_FILENO) && ConfigureKeyboardFd(STDIN_FILENO, &state.original_term))
     {
-        state.fd = tty_fd;
+        state.fd = STDIN_FILENO;
         std::cout << LOGGER::INFO
-                  << "Keyboard input attached to /dev/tty fallback for ros2 launch."
+                  << "Keyboard input attached to STDIN."
                   << std::endl;
     }
     else
     {
-        if (tty_fd >= 0)
+        const int tty_fd = open("/dev/tty", O_RDONLY | O_NONBLOCK);
+        if (tty_fd >= 0 && isatty(tty_fd) && ConfigureKeyboardFd(tty_fd, &state.original_term))
         {
-            close(tty_fd);
-        }
-
-        if (isatty(STDIN_FILENO) && ConfigureKeyboardFd(STDIN_FILENO, &state.original_term))
-        {
-            state.fd = STDIN_FILENO;
+            state.fd = tty_fd;
             std::cout << LOGGER::INFO
-                      << "Keyboard input attached to STDIN."
+                      << "Keyboard input attached to /dev/tty fallback for ros2 launch."
                       << std::endl;
         }
         else
         {
+            if (tty_fd >= 0)
+            {
+                close(tty_fd);
+            }
             if (!state.warned_no_tty)
             {
                 std::cout << LOGGER::WARNING
@@ -680,7 +758,18 @@ void RL::KeyboardInterface()
 
         if (keyboard_event != Input::Keyboard::None)
         {
+            std::cout << LOGGER::INFO
+                      << "[KeyboardInput] raw=" << DescribeKeyboardByte(c)
+                      << " mapped=" << KeyboardName(keyboard_event)
+                      << std::endl;
             this->pending_keyboard_input.store(keyboard_event, std::memory_order_release);
+        }
+        else
+        {
+            std::cout << LOGGER::INFO
+                      << "[KeyboardInput] raw=" << DescribeKeyboardByte(c)
+                      << " unmapped"
+                      << std::endl;
         }
     }
 }
