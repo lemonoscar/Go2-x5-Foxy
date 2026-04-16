@@ -138,7 +138,7 @@ ValidationResult DeployManifestLoader::ValidateNode(const YAML::Node& node)
 
     RequireAllowedKeys(node, {
         "meta", "robot", "policy", "body_adapter", "arm_adapter",
-        "coordinator", "supervisor", "ops"
+        "coordinator", "supervisor", "ops", "startup_sequence"
     }, "root", &result);
     if (!result.is_valid)
     {
@@ -154,6 +154,7 @@ ValidationResult DeployManifestLoader::ValidateNode(const YAML::Node& node)
     const YAML::Node coordinator = node["coordinator"];
     const YAML::Node supervisor = node["supervisor"];
     const YAML::Node ops = node["ops"];
+    const YAML::Node startup_sequence = node["startup_sequence"];
 
     RequireMap(meta, "meta", &result);
     RequireMap(robot, "robot", &result);
@@ -163,6 +164,7 @@ ValidationResult DeployManifestLoader::ValidateNode(const YAML::Node& node)
     RequireMap(coordinator, "coordinator", &result);
     RequireMap(supervisor, "supervisor", &result);
     RequireMap(ops, "ops", &result);
+    RequireMap(startup_sequence, "startup_sequence", &result);
     if (!result.is_valid)
     {
         return result;
@@ -186,6 +188,8 @@ ValidationResult DeployManifestLoader::ValidateNode(const YAML::Node& node)
         "fault_latched_requires_manual_reset"}, "supervisor", &result);
     RequireAllowedKeys(ops, {"ros2_enabled", "ros2_mirror_only", "bridge_rmw_implementation",
         "go2_rmw_implementation", "bag_enabled", "diagnostics_rate_hz"}, "ops", &result);
+    RequireAllowedKeys(startup_sequence, {"enabled", "get_up_delay_sec", "rl_delay_after_get_up_sec"},
+        "startup_sequence", &result);
     if (!result.is_valid)
     {
         return result;
@@ -285,6 +289,10 @@ ValidationResult DeployManifestLoader::ValidateNode(const YAML::Node& node)
     RequireScalarString(ops, "go2_rmw_implementation", "ops", nullptr, &result);
     RequireScalarBool(ops, "bag_enabled", "ops", nullptr, &result);
     RequireScalarInt(ops, "diagnostics_rate_hz", "ops", nullptr, &result);
+
+    RequireScalarBool(startup_sequence, "enabled", "startup_sequence", nullptr, &result);
+    RequireScalarDouble(startup_sequence, "get_up_delay_sec", "startup_sequence", nullptr, &result);
+    RequireScalarDouble(startup_sequence, "rl_delay_after_get_up_sec", "startup_sequence", nullptr, &result);
     return result;
 }
 
@@ -300,6 +308,7 @@ DeployManifest DeployManifestLoader::ParseManifest(const YAML::Node& node)
     const YAML::Node coordinator = node["coordinator"];
     const YAML::Node supervisor = node["supervisor"];
     const YAML::Node ops = node["ops"];
+    const YAML::Node startup_sequence = node["startup_sequence"];
 
     RequireScalarInt(meta, "manifest_version", "meta", &manifest.meta.manifest_version, nullptr);
     RequireScalarInt(meta, "protocol_version", "meta", &manifest.meta.protocol_version, nullptr);
@@ -421,6 +430,20 @@ DeployManifest DeployManifestLoader::ParseManifest(const YAML::Node& node)
     RequireScalarString(ops, "go2_rmw_implementation", "ops", &manifest.ops.go2_rmw_implementation, nullptr);
     RequireScalarBool(ops, "bag_enabled", "ops", &manifest.ops.bag_enabled, nullptr);
     RequireScalarInt(ops, "diagnostics_rate_hz", "ops", &manifest.ops.diagnostics_rate_hz, nullptr);
+
+    RequireScalarBool(startup_sequence, "enabled", "startup_sequence", &manifest.startup_sequence.enabled, nullptr);
+    RequireScalarDouble(
+        startup_sequence,
+        "get_up_delay_sec",
+        "startup_sequence",
+        &manifest.startup_sequence.get_up_delay_sec,
+        nullptr);
+    RequireScalarDouble(
+        startup_sequence,
+        "rl_delay_after_get_up_sec",
+        "startup_sequence",
+        &manifest.startup_sequence.rl_delay_after_get_up_sec,
+        nullptr);
     return manifest;
 }
 
@@ -685,6 +708,19 @@ ValidationResult DeployManifestLoader::ValidateManifest(const DeployManifest& ma
     if (manifest.ops.diagnostics_rate_hz != 50)
     {
         return ValidationResult::Error("ops.diagnostics_rate_hz must be 50", "ops.diagnostics_rate_hz");
+    }
+
+    if (manifest.startup_sequence.get_up_delay_sec < 0.0)
+    {
+        return ValidationResult::Error(
+            "startup_sequence.get_up_delay_sec must be non-negative",
+            "startup_sequence.get_up_delay_sec");
+    }
+    if (manifest.startup_sequence.rl_delay_after_get_up_sec < 0.0)
+    {
+        return ValidationResult::Error(
+            "startup_sequence.rl_delay_after_get_up_sec must be non-negative",
+            "startup_sequence.rl_delay_after_get_up_sec");
     }
 
     return ValidationResult::Ok();
@@ -1008,6 +1044,10 @@ std::string DeployManifestLoader::SerializeManifest(const DeployManifest& manife
     oss << "ops.go2_rmw_implementation=" << manifest.ops.go2_rmw_implementation << '\n';
     oss << "ops.bag_enabled=" << (manifest.ops.bag_enabled ? 1 : 0) << '\n';
     oss << "ops.diagnostics_rate_hz=" << manifest.ops.diagnostics_rate_hz << '\n';
+    oss << "startup_sequence.enabled=" << (manifest.startup_sequence.enabled ? 1 : 0) << '\n';
+    oss << "startup_sequence.get_up_delay_sec=" << manifest.startup_sequence.get_up_delay_sec << '\n';
+    oss << "startup_sequence.rl_delay_after_get_up_sec="
+        << manifest.startup_sequence.rl_delay_after_get_up_sec << '\n';
     return oss.str();
 }
 

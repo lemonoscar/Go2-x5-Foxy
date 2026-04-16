@@ -207,9 +207,15 @@ private:
     bool observation_builder_stats_logged_ = false;
     bool observation_snapshot_checked_ = false;
     std::chrono::steady_clock::time_point last_coordinator_tick_{};
+    std::chrono::steady_clock::time_point startup_sequence_loop_start_{};
     std::string observation_snapshot_path_;
     std::array<float, 3> latest_body_base_lin_vel_{{0.0f, 0.0f, 0.0f}};
     uint16_t latest_body_validity_flags_ = 0;
+    bool startup_sequence_enabled_ = false;
+    bool startup_sequence_get_up_sent_ = false;
+    bool startup_sequence_rl_sent_ = false;
+    double startup_sequence_get_up_delay_sec_ = 5.0;
+    double startup_sequence_rl_delay_after_get_up_sec_ = 5.0;
 
     void InitializeConfigLoader();
     void InitializeRuntimeOptions(int argc, char **argv);
@@ -260,6 +266,7 @@ private:
                                       const Go2X5ArmBridgeRuntime::RuntimeState& bridge);
 
     void SetupArmCommandSubscriber();
+    void MaybeRunStartupSequence();
     void SetupArmCommandIpc();
     void CloseArmCommandIpc();
     void PollArmCommandIpc();

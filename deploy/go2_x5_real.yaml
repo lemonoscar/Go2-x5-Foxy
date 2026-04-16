@@ -90,3 +90,8 @@ ops:
   go2_rmw_implementation: "rmw_fastrtps_cpp"
   bag_enabled: true
   diagnostics_rate_hz: 50
+
+startup_sequence:
+  enabled: false
+  get_up_delay_sec: 5.0
+  rl_delay_after_get_up_sec: 5.0

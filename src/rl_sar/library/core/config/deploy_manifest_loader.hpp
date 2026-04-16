@@ -131,6 +131,13 @@ struct DeployManifestOps
     int diagnostics_rate_hz = 0;
 };
 
+struct DeployManifestStartupSequence
+{
+    bool enabled = false;
+    double get_up_delay_sec = 5.0;
+    double rl_delay_after_get_up_sec = 5.0;
+};
+
 struct DeployManifest
 {
     DeployManifestMeta meta;
@@ -141,6 +148,7 @@ struct DeployManifest
     DeployManifestCoordinator coordinator;
     DeployManifestSupervisor supervisor;
     DeployManifestOps ops;
+    DeployManifestStartupSequence startup_sequence;
 };
 
 class DeployManifestLoader

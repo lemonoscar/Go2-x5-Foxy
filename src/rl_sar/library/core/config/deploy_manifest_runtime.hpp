@@ -52,6 +52,9 @@ struct DeployManifestRuntimeSnapshot
     std::string arm_bridge_transport;
     std::string bridge_rmw_implementation;
     std::string go2_rmw_implementation;
+    bool startup_sequence_enabled = false;
+    double startup_get_up_delay_sec = 0.0;
+    double startup_rl_delay_after_get_up_sec = 0.0;
 };
 
 class DeployManifestRuntime

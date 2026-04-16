@@ -559,7 +559,17 @@ RL_Real_Go2X5::RL_Real_Go2X5(int argc, char **argv)
     this->loop_keyboard->start();
     this->loop_control->start();
     this->loop_rl->start();
+    this->startup_sequence_loop_start_ = std::chrono::steady_clock::now();
     std::cout << LOGGER::INFO << "[Boot] Control loops started" << std::endl;
+    if (this->startup_sequence_enabled_)
+    {
+        std::cout << LOGGER::INFO
+                  << "[Boot] Startup sequence armed: get_up_delay_sec="
+                  << this->startup_sequence_get_up_delay_sec_
+                  << ", rl_delay_after_get_up_sec="
+                  << this->startup_sequence_rl_delay_after_get_up_sec_
+                  << std::endl;
+    }
 
 #ifdef PLOT
     const int num_dofs = GetNumDofs();
@@ -738,6 +748,9 @@ void RL_Real_Go2X5::InitializeConfigLoader()
         {
             this->arm_bridge_transport = snapshot.arm_bridge_transport;
         }
+        this->startup_sequence_enabled_ = snapshot.startup_sequence_enabled;
+        this->startup_sequence_get_up_delay_sec_ = snapshot.startup_get_up_delay_sec;
+        this->startup_sequence_rl_delay_after_get_up_sec_ = snapshot.startup_rl_delay_after_get_up_sec;
 
         YAML::Node dt_node;
         dt_node = static_cast<float>(1.0 / std::max(1, snapshot.coordinator_rate_hz));
@@ -824,6 +837,10 @@ void RL_Real_Go2X5::InitializeConfigLoader()
                   << ", arm_cmd_topic=" << snapshot.arm_cmd_topic
                   << ", arm_state_topic=" << snapshot.arm_state_topic
                   << ", arm_joint_command_topic=" << snapshot.arm_joint_command_topic
+                  << ", startup_sequence_enabled=" << (snapshot.startup_sequence_enabled ? "true" : "false")
+                  << ", startup_get_up_delay_sec=" << snapshot.startup_get_up_delay_sec
+                  << ", startup_rl_delay_after_get_up_sec="
+                  << snapshot.startup_rl_delay_after_get_up_sec
                   << ", bridge_rmw=" << snapshot.bridge_rmw_implementation
                   << ", runtime_rmw=" << snapshot.go2_rmw_implementation
                   << std::endl;
@@ -2907,10 +2924,55 @@ void RL_Real_Go2X5::SetCommand(const RobotCommand<float> *command)
     this->RefreshSupervisorState("lowcmd_write");
 }
 
+void RL_Real_Go2X5::MaybeRunStartupSequence()
+{
+    if (!this->startup_sequence_enabled_)
+    {
+        return;
+    }
+    if (this->startup_sequence_loop_start_.time_since_epoch().count() == 0)
+    {
+        return;
+    }
+
+    const double elapsed_sec = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - this->startup_sequence_loop_start_).count();
+    const double rl_trigger_sec =
+        this->startup_sequence_get_up_delay_sec_ + this->startup_sequence_rl_delay_after_get_up_sec_;
+
+    if (!this->startup_sequence_get_up_sent_ &&
+        elapsed_sec >= this->startup_sequence_get_up_delay_sec_)
+    {
+        this->startup_sequence_get_up_sent_ = true;
+        this->control.SetKeyboard(Input::Keyboard::Num0);
+        std::cout << LOGGER::INFO
+                  << "[StartupSequence] t=" << elapsed_sec
+                  << "s trigger=keyboard:Num0"
+                  << std::endl;
+    }
+
+    const bool body_left_passive =
+        this->fsm.current_state_ &&
+        this->fsm.current_state_->GetStateName() != "RLFSMStatePassive";
+    if (!this->startup_sequence_rl_sent_ &&
+        this->startup_sequence_get_up_sent_ &&
+        elapsed_sec >= rl_trigger_sec &&
+        body_left_passive)
+    {
+        this->startup_sequence_rl_sent_ = true;
+        this->control.SetKeyboard(Input::Keyboard::Num1);
+        std::cout << LOGGER::INFO
+                  << "[StartupSequence] t=" << elapsed_sec
+                  << "s trigger=keyboard:Num1"
+                  << std::endl;
+    }
+}
+
 void RL_Real_Go2X5::RobotControl()
 {
     this->GetState(&this->robot_state);
     this->PollArmCommandIpc();
+    this->MaybeRunStartupSequence();
 
     this->StateController(&this->robot_state, &this->robot_command);
 

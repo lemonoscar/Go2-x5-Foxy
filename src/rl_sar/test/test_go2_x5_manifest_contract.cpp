@@ -81,6 +81,11 @@ void CheckFrozenManifest(const RLConfig::DeployManifest& manifest)
     Require(manifest.ops.bridge_rmw_implementation == "rmw_cyclonedds_cpp", "bridge RMW mismatch");
     Require(manifest.ops.go2_rmw_implementation == "rmw_fastrtps_cpp", "runtime RMW mismatch");
     Require(manifest.ops.diagnostics_rate_hz == 50, "diagnostics rate mismatch");
+    Require(!manifest.startup_sequence.enabled, "startup sequence must stay disabled by default");
+    Require(std::abs(manifest.startup_sequence.get_up_delay_sec - 5.0) < 1e-9,
+        "startup get-up delay mismatch");
+    Require(std::abs(manifest.startup_sequence.rl_delay_after_get_up_sec - 5.0) < 1e-9,
+        "startup rl delay mismatch");
 }
 
 void CheckRuntimeSnapshot(const RLConfig::DeployManifestRuntimeSnapshot& snapshot,
@@ -111,6 +116,11 @@ void CheckRuntimeSnapshot(const RLConfig::DeployManifestRuntimeSnapshot& snapsho
     Require(snapshot.arm_bridge_transport == "ipc", "runtime snapshot transport mismatch");
     Require(snapshot.bridge_rmw_implementation == "rmw_cyclonedds_cpp", "runtime snapshot bridge RMW mismatch");
     Require(snapshot.go2_rmw_implementation == "rmw_fastrtps_cpp", "runtime snapshot runtime RMW mismatch");
+    Require(!snapshot.startup_sequence_enabled, "runtime snapshot startup sequence mismatch");
+    Require(std::abs(snapshot.startup_get_up_delay_sec - 5.0) < 1e-9,
+        "runtime snapshot startup get-up delay mismatch");
+    Require(std::abs(snapshot.startup_rl_delay_after_get_up_sec - 5.0) < 1e-9,
+        "runtime snapshot startup rl delay mismatch");
 }
 
 } // namespace
@@ -158,6 +168,9 @@ int main()
     RequireContains(manifest_dump, "body_adapter.velocity_estimator.moving_window_size=120", manifest_path_str.c_str());
     RequireContains(manifest_dump, "arm_adapter.arm_cmd_topic=/arx_x5/joint_cmd", manifest_path_str.c_str());
     RequireContains(manifest_dump, "ops.bridge_rmw_implementation=rmw_cyclonedds_cpp", manifest_path_str.c_str());
+    RequireContains(manifest_dump, "startup_sequence.enabled=0", manifest_path_str.c_str());
+    RequireContains(manifest_dump, "startup_sequence.get_up_delay_sec=5", manifest_path_str.c_str());
+    RequireContains(manifest_dump, "startup_sequence.rl_delay_after_get_up_sec=5", manifest_path_str.c_str());
 
     RLConfig::DeployManifestRuntime runtime(manifest_path_str);
     const auto runtime_result = runtime.LoadFromFile(manifest_path_str);

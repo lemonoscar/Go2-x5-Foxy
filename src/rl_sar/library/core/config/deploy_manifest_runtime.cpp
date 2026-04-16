@@ -127,6 +127,9 @@ DeployManifestRuntimeSnapshot DeployManifestRuntime::Snapshot() const
     snapshot.arm_bridge_transport = manifest.ops.ros2_mirror_only ? "ipc" : "ros";
     snapshot.bridge_rmw_implementation = manifest.ops.bridge_rmw_implementation;
     snapshot.go2_rmw_implementation = manifest.ops.go2_rmw_implementation;
+    snapshot.startup_sequence_enabled = manifest.startup_sequence.enabled;
+    snapshot.startup_get_up_delay_sec = manifest.startup_sequence.get_up_delay_sec;
+    snapshot.startup_rl_delay_after_get_up_sec = manifest.startup_sequence.rl_delay_after_get_up_sec;
     return snapshot;
 }
 

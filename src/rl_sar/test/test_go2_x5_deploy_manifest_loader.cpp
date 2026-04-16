@@ -54,6 +54,11 @@ void CheckFrozenContract(const RLConfig::DeployManifest& manifest)
     Require(manifest.ops.go2_rmw_implementation == "rmw_fastrtps_cpp",
         "ops.go2_rmw_implementation mismatch");
     Require(manifest.ops.diagnostics_rate_hz == 50, "ops.diagnostics_rate_hz must be 50");
+    Require(!manifest.startup_sequence.enabled, "startup_sequence.enabled must default to false");
+    Require(std::abs(manifest.startup_sequence.get_up_delay_sec - 5.0) < 1e-9,
+        "startup_sequence.get_up_delay_sec mismatch");
+    Require(std::abs(manifest.startup_sequence.rl_delay_after_get_up_sec - 5.0) < 1e-9,
+        "startup_sequence.rl_delay_after_get_up_sec mismatch");
 }
 
 } // namespace
