@@ -169,6 +169,9 @@ void RL_Real_Go2X5::HandleArmBridgeStateData(
         }
     }
 
+    const auto supervisor_mode = this->GetSupervisorModeSnapshot();
+    const bool monitor_tracking_error = this->ShouldActuateArmForMode(supervisor_mode);
+
     bool tracking_error_high = false;
     bool tracking_error_changed = false;
     Go2X5ArmBridgeRuntime::ApplyStateSampleResult result;
@@ -182,8 +185,10 @@ void RL_Real_Go2X5::HandleArmBridgeStateData(
             MonotonicNsToTimePoint(source_monotonic_ns));
         this->ApplyArmBridgeRuntimeStateLocked(bridge_state);
 
-        const auto supervisor_mode = this->GetSupervisorModeSnapshot();
-        const bool monitor_tracking_error = this->ShouldActuateArmForMode(supervisor_mode);
+        // Keep supervisor_mutex acquisition outside arm_external_state_mutex.
+        // Boot-time supervisor refresh takes the inverse lock order
+        // (supervisor -> arm state), so querying the supervisor here while
+        // holding arm_external_state_mutex can deadlock startup.
         if (monitor_tracking_error &&
             !sample.q.empty() &&
             target_pose.size() == sample.q.size() &&
