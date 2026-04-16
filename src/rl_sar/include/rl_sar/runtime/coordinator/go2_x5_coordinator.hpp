@@ -37,6 +37,8 @@ private:
     mutable Go2X5Supervisor::Mode last_mode_ = Go2X5Supervisor::Mode::Boot;
     mutable bool fallback_plan_active_ = false;
     mutable bool rl_handover_plan_active_ = false;
+    mutable std::array<float, protocol::kBodyJointCount> last_rl_target_q_{};
+    mutable bool last_rl_target_valid_ = false;
 };
 
 }  // namespace rl_sar::runtime::coordinator

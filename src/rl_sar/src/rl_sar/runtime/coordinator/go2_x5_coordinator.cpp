@@ -9,17 +9,6 @@ namespace
 {
 
 template <size_t N>
-float ClampAbs(float value, const std::array<float, N>& limits, size_t idx)
-{
-    const float limit = (idx < limits.size()) ? std::max(0.0f, limits[idx]) : 0.0f;
-    if (limit <= 0.0f)
-    {
-        return value;
-    }
-    return std::max(-limit, std::min(limit, value));
-}
-
-template <size_t N>
 void FillBodyHeader(protocol::BodyCommandFrame* frame,
                     Go2X5Supervisor::Mode mode,
                     uint64_t now_ns,
@@ -74,6 +63,44 @@ std::array<float, protocol::kBodyJointCount> DecodePolicyTargetQ(
     return target_q;
 }
 
+std::array<float, protocol::kBodyJointCount> ClampTargetDelta(
+    const Config& config,
+    const std::array<float, protocol::kBodyJointCount>& desired_q,
+    const std::array<float, protocol::kBodyJointCount>& reference_q)
+{
+    std::array<float, protocol::kBodyJointCount> clamped_q = desired_q;
+    const float step_limit = std::max(0.0f, config.rl_target_step_limit_rad);
+    if (step_limit <= 0.0f)
+    {
+        return clamped_q;
+    }
+
+    for (size_t i = 0; i < protocol::kBodyJointCount; ++i)
+    {
+        const float delta = desired_q[i] - reference_q[i];
+        clamped_q[i] = reference_q[i] + std::clamp(delta, -step_limit, step_limit);
+    }
+    return clamped_q;
+}
+
+std::array<float, protocol::kBodyJointCount> ClampTargetVelocity(
+    const Config& config,
+    const std::array<float, protocol::kBodyJointCount>& desired_dq)
+{
+    std::array<float, protocol::kBodyJointCount> clamped_dq = desired_dq;
+    const float dq_limit = std::max(0.0f, config.rl_target_dq_limit_rad_s);
+    if (dq_limit <= 0.0f)
+    {
+        return clamped_dq;
+    }
+
+    for (size_t i = 0; i < protocol::kBodyJointCount; ++i)
+    {
+        clamped_dq[i] = std::clamp(desired_dq[i], -dq_limit, dq_limit);
+    }
+    return clamped_dq;
+}
+
 protocol::BodyCommandFrame MakeTrackingBodyCommand(
     const Config& config,
     const Input& input,
@@ -94,16 +121,7 @@ protocol::BodyCommandFrame MakeTrackingBodyCommand(
         frame.dq[i] = target_dq[i];
         frame.kp[i] = config.rl_kp[i];
         frame.kd[i] = config.rl_kd[i];
-        if (input.has_body_state)
-        {
-            const float tau = config.rl_kp[i] * (frame.q[i] - input.body_state.leg_q[i]) +
-                              config.rl_kd[i] * (frame.dq[i] - input.body_state.leg_dq[i]);
-            frame.tau[i] = ClampAbs(tau, config.torque_limits, i);
-        }
-        else
-        {
-            frame.tau[i] = 0.0f;
-        }
+        frame.tau[i] = 0.0f;
     }
     return frame;
 }
@@ -223,11 +241,13 @@ Output HybridMotionCoordinator::Step(const Input& input) const
     {
         rl_handover_smoother_.Reset();
         rl_handover_plan_active_ = false;
+        last_rl_target_valid_ = false;
     }
     else if (entering_new_mode)
     {
         rl_handover_smoother_.Reset();
         rl_handover_plan_active_ = false;
+        last_rl_target_valid_ = false;
     }
     last_mode_ = input.mode;
 
@@ -278,10 +298,13 @@ Output HybridMotionCoordinator::Step(const Input& input) const
                 target_q = rl_handover_smoother_.GetTargetPosition(input.now_monotonic_ns);
                 target_dq = rl_handover_smoother_.GetTargetVelocity(input.now_monotonic_ns);
             }
-            else
-            {
-                rl_handover_plan_active_ = false;
-            }
+
+            const auto reference_q =
+                last_rl_target_valid_
+                    ? last_rl_target_q_
+                    : (input.has_body_state ? input.body_state.leg_q : config_.default_leg_q);
+            target_q = ClampTargetDelta(config_, target_q, reference_q);
+            target_dq = ClampTargetVelocity(config_, target_dq);
             output.body_command =
                 MakeTrackingBodyCommand(config_, input, target_q, target_dq, false);
             output.body_command_valid = true;
@@ -290,6 +313,8 @@ Output HybridMotionCoordinator::Step(const Input& input) const
             output.current_cmd_from_fresh_sample = policy_state_.current_cmd_from_fresh_sample;
             output.policy_age_ns = policy_age_ns;
             output.policy_seq = policy_state_.seq;
+            last_rl_target_q_ = target_q;
+            last_rl_target_valid_ = true;
         }
 
         if (CanUseArmCommand(input) && input.arm_backend_valid && !input.arm_tracking_error_high)

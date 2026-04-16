@@ -105,6 +105,43 @@ std::array<float, N> VectorToArray(const std::vector<float>& values, const float
     return out;
 }
 
+template <size_t N>
+std::pair<float, float> MinMaxArray(const std::array<float, N>& values)
+{
+    float min_value = std::numeric_limits<float>::infinity();
+    float max_value = -std::numeric_limits<float>::infinity();
+    for (const float value : values)
+    {
+        if (!std::isfinite(value))
+        {
+            continue;
+        }
+        min_value = std::min(min_value, value);
+        max_value = std::max(max_value, value);
+    }
+
+    if (!std::isfinite(min_value) || !std::isfinite(max_value))
+    {
+        return {0.0f, 0.0f};
+    }
+    return {min_value, max_value};
+}
+
+template <size_t N>
+float MaxAbsArray(const std::array<float, N>& values)
+{
+    float max_abs = 0.0f;
+    for (const float value : values)
+    {
+        if (!std::isfinite(value))
+        {
+            continue;
+        }
+        max_abs = std::max(max_abs, std::fabs(value));
+    }
+    return max_abs;
+}
+
 std::array<float, 4> NormalizeQuaternion(const std::array<float, 4>& quat)
 {
     float norm_sq = 0.0f;
@@ -2023,22 +2060,7 @@ rl_sar::protocol::BodyCommandFrame RL_Real_Go2X5::BuildHoldBodyCommandFrame(
         frame.dq[body_idx] = 0.0f;
         frame.kp[body_idx] = kp;
         frame.kd[body_idx] = kd;
-
-        float tau = 0.0f;
-        if (joint_slot < this->robot_state.motor_state.q.size() &&
-            joint_slot < this->robot_state.motor_state.dq.size())
-        {
-            tau = kp * (q_ref - this->robot_state.motor_state.q[joint_slot]) -
-                  kd * this->robot_state.motor_state.dq[joint_slot];
-        }
-        if (joint_slot < this->whole_body_effort_limits.size() &&
-            std::isfinite(this->whole_body_effort_limits[joint_slot]) &&
-            this->whole_body_effort_limits[joint_slot] > 0.0f)
-        {
-            const float limit = std::fabs(this->whole_body_effort_limits[joint_slot]);
-            tau = std::max(-limit, std::min(limit, tau));
-        }
-        frame.tau[body_idx] = tau;
+        frame.tau[body_idx] = 0.0f;
         ++body_idx;
     }
 
@@ -2826,6 +2848,55 @@ void RL_Real_Go2X5::SetCommand(const RobotCommand<float> *command)
         {
             final_arm_command = coordinator_output.arm_command;
         }
+
+        if (supervisor_mode == Go2X5Supervisor::Mode::RlDogOnlyActive &&
+            this->rl_debug_last_mode_ != Go2X5Supervisor::Mode::RlDogOnlyActive)
+        {
+            this->rl_entry_debug_frames_remaining_ = 10;
+        }
+        else if (supervisor_mode != Go2X5Supervisor::Mode::RlDogOnlyActive)
+        {
+            this->rl_entry_debug_frames_remaining_ = 0;
+        }
+
+        if (supervisor_mode == Go2X5Supervisor::Mode::RlDogOnlyActive &&
+            coordinator_output.body_command_valid &&
+            this->rl_entry_debug_frames_remaining_ > 0)
+        {
+            std::array<float, rl_sar::protocol::kBodyJointCount> q_delta{};
+            if (coordinator_input.has_body_state)
+            {
+                for (size_t i = 0; i < rl_sar::protocol::kBodyJointCount; ++i)
+                {
+                    q_delta[i] = final_body_command.q[i] - coordinator_input.body_state.leg_q[i];
+                }
+            }
+
+            const auto action_minmax =
+                coordinator_input.has_policy_command
+                    ? MinMaxArray(coordinator_input.dog_policy_command.leg_action)
+                    : std::make_pair(0.0f, 0.0f);
+            const auto q_delta_minmax = MinMaxArray(q_delta);
+            const float kp_max_abs = MaxAbsArray(final_body_command.kp);
+            const float kd_max_abs = MaxAbsArray(final_body_command.kd);
+            const float tau_max_abs = MaxAbsArray(final_body_command.tau);
+            const int debug_frame_index = 11 - this->rl_entry_debug_frames_remaining_;
+
+            std::cout << LOGGER::INFO
+                      << "[RLDebug] frame=" << debug_frame_index
+                      << " seq=" << coordinator_output.policy_seq
+                      << " fresh=" << (coordinator_output.policy_is_fresh ? "true" : "false")
+                      << " action_min=" << action_minmax.first
+                      << " action_max=" << action_minmax.second
+                      << " q_delta_min=" << q_delta_minmax.first
+                      << " q_delta_max=" << q_delta_minmax.second
+                      << " kp_max_abs=" << kp_max_abs
+                      << " kd_max_abs=" << kd_max_abs
+                      << " tau_max_abs=" << tau_max_abs
+                      << std::endl;
+            --this->rl_entry_debug_frames_remaining_;
+        }
+        this->rl_debug_last_mode_ = supervisor_mode;
     }
     this->ApplyCoordinatorBodyCommand(final_body_command, &command_local);
 

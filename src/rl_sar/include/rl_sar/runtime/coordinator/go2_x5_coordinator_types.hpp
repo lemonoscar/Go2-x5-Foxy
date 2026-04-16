@@ -16,7 +16,9 @@ struct Config
     uint64_t body_command_expire_ns = 15'000'000ULL;
     uint64_t arm_command_expire_ns = 15'000'000ULL;
     uint64_t policy_fresh_threshold_ns = 100'000'000ULL;
-    uint64_t rl_handover_duration_ns = 500'000'000ULL;
+    uint64_t rl_handover_duration_ns = 1'000'000'000ULL;
+    float rl_target_step_limit_rad = 0.10f;
+    float rl_target_dq_limit_rad_s = 1.0f;
     std::array<float, protocol::kBodyJointCount> default_leg_q{};
     std::array<float, protocol::kBodyJointCount> action_scale{};
     std::array<float, protocol::kBodyJointCount> rl_kp{};

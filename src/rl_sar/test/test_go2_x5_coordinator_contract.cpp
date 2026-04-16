@@ -65,16 +65,16 @@ BodyStateFrame MakeBodyState()
     return frame;
 }
 
-DogPolicyCommandFrame MakePolicyCommand(uint64_t now_ns)
+DogPolicyCommandFrame MakePolicyCommand(uint64_t now_ns, float action_value = 0.2f, uint64_t seq = 20)
 {
     DogPolicyCommandFrame frame;
-    frame.header.seq = 20;
+    frame.header.seq = seq;
     frame.header.source_monotonic_ns = now_ns;
     frame.header.publish_monotonic_ns = now_ns;
     frame.action_dim = rl_sar::protocol::kDogJointCount;
     for (size_t i = 0; i < rl_sar::protocol::kDogJointCount; ++i)
     {
-        frame.leg_action[i] = 0.2f;
+        frame.leg_action[i] = action_value;
     }
     return frame;
 }
@@ -195,10 +195,80 @@ void TestRlActiveUsesSmoothedHandover()
     Require(mid.body_command.q[0] < decoded_target_q,
             "handover should not jump straight to the policy target");
 
-    input.now_monotonic_ns += 600'000'000ULL;
-    const auto done = coordinator.Step(input);
+    Input settled = input;
+    for (int i = 0; i < 220; ++i)
+    {
+        settled.now_monotonic_ns += 5'000'000ULL;
+        (void)coordinator.Step(settled);
+    }
+    const auto done = coordinator.Step(settled);
     RequireNear(done.body_command.q[0], decoded_target_q, 1e-4f,
                 "handover should converge to the policy target");
+}
+
+void TestRlActiveZeroesFeedforwardTau()
+{
+    HybridMotionCoordinator coordinator(MakeConfig());
+    Input input;
+    input.now_monotonic_ns = 6'000'000ULL;
+    input.mode = Mode::RlDogOnlyActive;
+    input.has_body_state = true;
+    input.body_state = MakeBodyState();
+    input.has_policy_command = true;
+    input.dog_policy_command = MakePolicyCommand(input.now_monotonic_ns);
+
+    coordinator.Step(input);
+    input.now_monotonic_ns += 100'000'000ULL;
+    const auto output = coordinator.Step(input);
+    RequireNear(output.body_command.tau[0], 0.0f, 1e-6f,
+                "position-control RL command should not inject feedforward tau");
+}
+
+void TestRlActiveClampsTargetVelocityDuringHandover()
+{
+    Config config = MakeConfig();
+    config.rl_handover_duration_ns = 200'000'000ULL;
+    config.rl_target_dq_limit_rad_s = 0.01f;
+    HybridMotionCoordinator coordinator(config);
+    Input input;
+    input.now_monotonic_ns = 6'000'000ULL;
+    input.mode = Mode::RlDogOnlyActive;
+    input.has_body_state = true;
+    input.body_state = MakeBodyState();
+    input.has_policy_command = true;
+    input.dog_policy_command = MakePolicyCommand(input.now_monotonic_ns, 1.0f);
+
+    coordinator.Step(input);
+    input.now_monotonic_ns += 100'000'000ULL;
+    const auto output = coordinator.Step(input);
+    Require(std::fabs(output.body_command.dq[0]) <= 0.010001f,
+            "handover target dq should obey the configured clamp");
+}
+
+void TestRlActiveLimitsTargetStepAfterHandover()
+{
+    Config config = MakeConfig();
+    config.rl_handover_duration_ns = 50'000'000ULL;
+    HybridMotionCoordinator coordinator(config);
+    Input input;
+    input.now_monotonic_ns = 6'000'000ULL;
+    input.mode = Mode::RlDogOnlyActive;
+    input.has_body_state = true;
+    input.body_state = MakeBodyState();
+    input.has_policy_command = true;
+    input.dog_policy_command = MakePolicyCommand(input.now_monotonic_ns, 0.2f, 20);
+
+    coordinator.Step(input);
+    input.now_monotonic_ns += 60'000'000ULL;
+    const auto settled = coordinator.Step(input);
+
+    input.now_monotonic_ns += 5'000'000ULL;
+    input.dog_policy_command = MakePolicyCommand(input.now_monotonic_ns, 2.0f, 21);
+    const auto limited = coordinator.Step(input);
+    const float q_step = limited.body_command.q[0] - settled.body_command.q[0];
+    Require(q_step > 0.0f, "step-limited RL target should still move toward the new policy target");
+    Require(q_step <= config.rl_target_step_limit_rad + 1e-6f,
+            "step-limited RL target should not jump beyond the configured clamp");
 }
 
 void TestExpiredArmCommandRejected()
@@ -303,6 +373,9 @@ int main()
     TestManualArmHoldsBodyAndPassesArm();
     TestRlActiveDecodesDogOnlyBody();
     TestRlActiveUsesSmoothedHandover();
+    TestRlActiveZeroesFeedforwardTau();
+    TestRlActiveClampsTargetVelocityDuringHandover();
+    TestRlActiveLimitsTargetStepAfterHandover();
     TestExpiredArmCommandRejected();
     TestDegradedArmForcesHold();
     TestPolicyFreshnessTracksHeldSample();

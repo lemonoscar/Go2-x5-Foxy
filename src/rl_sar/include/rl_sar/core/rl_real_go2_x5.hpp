@@ -402,6 +402,8 @@ private:
     std::atomic<bool> operator_fault_reset_requested_{false};
     std::atomic<bool> policy_health_bad_runtime_{false};
     std::atomic<bool> body_dds_write_ok_runtime_{true};
+    Go2X5Supervisor::Mode rl_debug_last_mode_ = Go2X5Supervisor::Mode::Boot;
+    int rl_entry_debug_frames_remaining_ = 0;
     mutable std::chrono::steady_clock::time_point whole_body_clip_warn_stamp{};
     std::chrono::steady_clock::time_point arm_bridge_ipc_send_warn_stamp{};
     std::chrono::steady_clock::time_point arm_command_suppressed_warn_stamp{};
