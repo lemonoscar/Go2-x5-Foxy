@@ -526,26 +526,30 @@ int AcquireKeyboardFd()
         return state.fd;
     }
 
-    if (isatty(STDIN_FILENO) && ConfigureKeyboardFd(STDIN_FILENO, &state.original_term))
+    const int tty_fd = open("/dev/tty", O_RDONLY | O_NONBLOCK);
+    if (tty_fd >= 0 && isatty(tty_fd) && ConfigureKeyboardFd(tty_fd, &state.original_term))
     {
-        state.fd = STDIN_FILENO;
+        state.fd = tty_fd;
+        std::cout << LOGGER::INFO
+                  << "Keyboard input attached to /dev/tty fallback for ros2 launch."
+                  << std::endl;
     }
     else
     {
-        const int tty_fd = open("/dev/tty", O_RDONLY | O_NONBLOCK);
-        if (tty_fd >= 0 && isatty(tty_fd) && ConfigureKeyboardFd(tty_fd, &state.original_term))
+        if (tty_fd >= 0)
         {
-            state.fd = tty_fd;
+            close(tty_fd);
+        }
+
+        if (isatty(STDIN_FILENO) && ConfigureKeyboardFd(STDIN_FILENO, &state.original_term))
+        {
+            state.fd = STDIN_FILENO;
             std::cout << LOGGER::INFO
-                      << "Keyboard input attached to /dev/tty fallback for ros2 launch."
+                      << "Keyboard input attached to STDIN."
                       << std::endl;
         }
         else
         {
-            if (tty_fd >= 0)
-            {
-                close(tty_fd);
-            }
             if (!state.warned_no_tty)
             {
                 std::cout << LOGGER::WARNING
