@@ -51,6 +51,17 @@ bool RL_Real_Go2X5::ShouldActuateArmForMode(const Go2X5Supervisor::Mode mode) co
     return false;
 }
 
+bool RL_Real_Go2X5::ShouldApplyActiveArmControl(const Go2X5Supervisor::Mode mode) const
+{
+    if (!this->ShouldActuateArmForMode(mode))
+    {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(this->arm_command_mutex);
+    return this->arm_explicit_command_active_;
+}
+
 bool RL_Real_Go2X5::ShouldExecuteActiveShutdown() const
 {
     const auto mode = this->GetSupervisorModeSnapshot();

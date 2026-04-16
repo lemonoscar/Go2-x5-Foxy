@@ -94,6 +94,14 @@ int main()
         core_file.string());
     RequireContains(
         core_content,
+        "const bool arm_explicit_command_active = this->arm_explicit_command_active_;",
+        core_file.string());
+    RequireContains(
+        core_content,
+        "this->arm_safe_shutdown_active.load() || this->ShouldApplyActiveArmControl(mode);",
+        core_file.string());
+    RequireContains(
+        core_content,
         "final_body_command = build_body_command_from_robot_command(supervisor_mode);",
         core_file.string());
     RequireContains(
@@ -115,6 +123,7 @@ int main()
 
     const std::string utility_content = ReadAll(utility_file.string());
     RequireContains(utility_content, "bool RL_Real_Go2X5::ShouldActuateArmForMode", utility_file.string());
+    RequireContains(utility_content, "bool RL_Real_Go2X5::ShouldApplyActiveArmControl", utility_file.string());
     RequireContains(utility_content, "case Go2X5Supervisor::Mode::ManualArm:", utility_file.string());
     RequireContains(utility_content, "case Go2X5Supervisor::Mode::RlDogOnlyActive:", utility_file.string());
     RequireNotContains(utility_content, "case Go2X5Supervisor::Mode::Ready:\n        return true;", utility_file.string());
@@ -123,6 +132,7 @@ int main()
     const std::string state_io_content = ReadAll(state_io_file.string());
     RequireContains(state_io_content, "const auto supervisor_mode = this->GetSupervisorModeSnapshot();", state_io_file.string());
     RequireContains(state_io_content, "const bool allow_arm_actuation =", state_io_file.string());
+    RequireContains(state_io_content, "this->arm_explicit_command_active_ = true;", state_io_file.string());
     RequireContains(
         state_io_content,
         "this->arm_safe_shutdown_active.load() || this->ShouldActuateArmForMode(supervisor_mode);",
@@ -135,7 +145,11 @@ int main()
         state_io_file.string());
 
     const std::string ros_content = ReadAll(ros_file.string());
-    RequireContains(ros_content, "const bool monitor_tracking_error = this->ShouldActuateArmForMode(supervisor_mode);", ros_file.string());
+    RequireContains(
+        ros_content,
+        "this->arm_safe_shutdown_active.load() || this->ShouldApplyActiveArmControl(supervisor_mode);",
+        ros_file.string());
+    RequireContains(ros_content, "this->arm_explicit_command_active_ = true;", ros_file.string());
     RequireContains(ros_content, "this->arm_tracking_error_high_stamp = std::chrono::steady_clock::time_point{};", ros_file.string());
 
     const std::string ipc_content = ReadAll(ipc_file.string());

@@ -1463,7 +1463,9 @@ rl_sar::runtime::coordinator::Input RL_Real_Go2X5::BuildCoordinatorInput(
 
     {
         std::lock_guard<std::mutex> lock(this->arm_command_mutex);
-        if (this->arm_joint_command_latest.size() == static_cast<size_t>(this->arm_joint_count) &&
+        const bool arm_explicit_command_active = this->arm_explicit_command_active_;
+        if (arm_explicit_command_active &&
+            this->arm_joint_command_latest.size() == static_cast<size_t>(this->arm_joint_count) &&
             this->arm_joint_count > 0 &&
             !rl_sar::protocol::IsCommandExpired(
                 now_monotonic_ns, this->arm_joint_command_expire_ns_))
@@ -2106,7 +2108,7 @@ rl_sar::protocol::ArmCommandFrame RL_Real_Go2X5::BuildHoldArmCommandFrame(
     const auto fixed_kp = this->GetFixedKp();
     const auto fixed_kd = this->GetFixedKd();
     const bool allow_arm_actuation =
-        this->arm_safe_shutdown_active.load() || this->ShouldActuateArmForMode(mode);
+        this->arm_safe_shutdown_active.load() || this->ShouldApplyActiveArmControl(mode);
     for (int i = 0; i < this->arm_joint_count && i < static_cast<int>(rl_sar::protocol::kArmJointCount); ++i)
     {
         const size_t idx = static_cast<size_t>(i);
@@ -2257,6 +2259,7 @@ void RL_Real_Go2X5::InitializeArmCommandState()
     config.arm_hold_pose = config_->GetArmHoldPose();
     config.default_dof_pos = GetDefaultDofPos();
     this->ApplyArmCommandStateLocked(Go2X5ArmRuntime::BuildInitialCommandState(config));
+    this->arm_explicit_command_active_ = false;
 
     const uint64_t now_ns = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(

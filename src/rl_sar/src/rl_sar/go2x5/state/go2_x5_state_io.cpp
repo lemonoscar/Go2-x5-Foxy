@@ -288,6 +288,7 @@ void RL_Real_Go2X5::ApplyArmHold(const std::vector<float>& target, const char* r
     auto state = this->CaptureArmCommandStateLocked();
     Go2X5ArmRuntime::ApplyHoldTarget(&state, target_local);
     this->ApplyArmCommandStateLocked(state);
+    this->arm_explicit_command_active_ = true;
     const uint64_t now_ns = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count());

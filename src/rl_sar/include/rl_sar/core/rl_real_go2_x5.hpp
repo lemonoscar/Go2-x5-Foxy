@@ -281,6 +281,7 @@ private:
     bool UseArmBridgeIpc() const;
     Go2X5Supervisor::Mode GetSupervisorModeSnapshot() const;
     bool ShouldActuateArmForMode(Go2X5Supervisor::Mode mode) const;
+    bool ShouldApplyActiveArmControl(Go2X5Supervisor::Mode mode) const;
     bool ShouldExecuteActiveShutdown() const;
     std::vector<float> GetDefaultWholeBodyLowerLimits() const;
     std::vector<float> GetDefaultWholeBodyUpperLimits() const;
@@ -347,6 +348,7 @@ private:
     std::vector<float> arm_joint_command_latest;
     std::vector<float> arm_topic_command_latest;
     bool arm_topic_command_received = false;
+    bool arm_explicit_command_active_ = false;
     uint64_t arm_joint_command_source_monotonic_ns_ = 0;
     uint64_t arm_joint_command_publish_monotonic_ns_ = 0;
     uint64_t arm_joint_command_expire_ns_ = 0;

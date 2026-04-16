@@ -201,6 +201,7 @@ void RL_Real_Go2X5::ExecuteSafeShutdownSequence()
             this->arm_joint_command_latest = this->arm_hold_position;
             this->arm_topic_command_latest = this->arm_hold_position;
             this->arm_topic_command_received = true;
+            this->arm_explicit_command_active_ = true;
             this->arm_hold_enabled = true;
             const uint64_t now_ns = static_cast<uint64_t>(
                 std::chrono::duration_cast<std::chrono::nanoseconds>(

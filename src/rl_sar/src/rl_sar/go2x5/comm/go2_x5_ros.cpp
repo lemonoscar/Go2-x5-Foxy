@@ -99,6 +99,7 @@ void RL_Real_Go2X5::HandleArmJointCommandData(const std::vector<float>& data,
         this->arm_topic_command_latest[i] = target[i];
     }
     this->arm_topic_command_received = true;
+    this->arm_explicit_command_active_ = true;
     this->arm_joint_command_source_monotonic_ns_ =
         source_monotonic_ns != 0 ? source_monotonic_ns : MonotonicNowNs();
     this->arm_joint_command_publish_monotonic_ns_ =
@@ -170,7 +171,8 @@ void RL_Real_Go2X5::HandleArmBridgeStateData(
     }
 
     const auto supervisor_mode = this->GetSupervisorModeSnapshot();
-    const bool monitor_tracking_error = this->ShouldActuateArmForMode(supervisor_mode);
+    const bool monitor_tracking_error =
+        this->arm_safe_shutdown_active.load() || this->ShouldApplyActiveArmControl(supervisor_mode);
 
     bool tracking_error_high = false;
     bool tracking_error_changed = false;
