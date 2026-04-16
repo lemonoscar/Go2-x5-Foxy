@@ -61,9 +61,12 @@ int main()
     const std::string real_content = ReadAll(real_file.string());
     RequireContains(launch_content, "DeclareLaunchArgument(\"deploy_manifest_path\", default_value=_default_manifest_path())", launch_file.string());
     RequireContains(launch_content, "def _default_manifest_path() -> str:", launch_file.string());
+    RequireContains(launch_content, "def _resolve_manifest_path(path: str) -> str:", launch_file.string());
     RequireContains(launch_content, "\"deploy\" / \"go2_x5_real.yaml\"", launch_file.string());
+    RequireContains(launch_content, "Path(path).expanduser().resolve()", launch_file.string());
     RequireContains(launch_content, "OpaqueFunction(function=_build_launch_actions)", launch_file.string());
     RequireContains(launch_content, "\"--manifest-path\"", launch_file.string());
+    RequireContains(launch_content, "resolved_manifest_path", launch_file.string());
     RequireContains(launch_content, "DeclareLaunchArgument(\"go2_enable_ros2_runtime\"", launch_file.string());
     RequireContains(launch_content, "go2_rmw_implementation", launch_file.string());
     Require(launch_content.find("start_arm_bridge") == std::string::npos,

@@ -18,11 +18,16 @@ def _default_manifest_path() -> str:
     return str(_repo_root() / "deploy" / "go2_x5_real.yaml")
 
 
+def _resolve_manifest_path(path: str) -> str:
+    return str(Path(path).expanduser().resolve())
+
+
 def _load_manifest(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as stream:
+    resolved_path = _resolve_manifest_path(path)
+    with open(resolved_path, "r", encoding="utf-8") as stream:
         data = yaml.safe_load(stream) or {}
     if not isinstance(data, dict):
-        raise RuntimeError(f"deploy manifest must be a mapping: {path}")
+        raise RuntimeError(f"deploy manifest must be a mapping: {resolved_path}")
     return data
 
 
@@ -42,6 +47,7 @@ def _manifest_runtime_defaults(manifest: dict) -> dict:
 
 def _build_launch_actions(context, *args, **kwargs):  # pylint: disable=unused-argument
     manifest_path = LaunchConfiguration("deploy_manifest_path").perform(context)
+    resolved_manifest_path = _resolve_manifest_path(manifest_path)
     manifest = _load_manifest(manifest_path)
     runtime_defaults = _manifest_runtime_defaults(manifest)
 
@@ -63,7 +69,7 @@ def _build_launch_actions(context, *args, **kwargs):  # pylint: disable=unused-a
         arguments=[
             network_interface,
             "--manifest-path",
-            manifest_path,
+            resolved_manifest_path,
             "--enable-ros2-runtime",
             go2_enable_ros2_runtime,
         ],
