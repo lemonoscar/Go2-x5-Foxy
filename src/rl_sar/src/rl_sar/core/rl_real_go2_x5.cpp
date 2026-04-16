@@ -2116,26 +2116,26 @@ void RL_Real_Go2X5::RefreshSupervisorState(const char* source)
     Go2X5Supervisor::Config supervisor_config;
 
     {
+        std::lock_guard<std::mutex> lock(this->unitree_state_mutex);
+        if (this->body_state_seq_pending_)
+        {
+            ++this->body_state_seq_;
+            this->body_state_seq_pending_ = false;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(this->arm_external_state_mutex);
+        if (this->arm_state_seq_pending_)
+        {
+            ++this->arm_state_seq_;
+            this->arm_state_seq_pending_ = false;
+        }
+    }
+
+    input = this->BuildSupervisorInput();
+
+    {
         std::lock_guard<std::mutex> supervisor_lock(this->supervisor_mutex);
-
-        {
-            std::lock_guard<std::mutex> lock(this->unitree_state_mutex);
-            if (this->body_state_seq_pending_)
-            {
-                ++this->body_state_seq_;
-                this->body_state_seq_pending_ = false;
-            }
-        }
-        {
-            std::lock_guard<std::mutex> lock(this->arm_external_state_mutex);
-            if (this->arm_state_seq_pending_)
-            {
-                ++this->arm_state_seq_;
-                this->arm_state_seq_pending_ = false;
-            }
-        }
-
-        input = this->BuildSupervisorInput();
         this->supervisor_->NoteHeartbeat(input.now_monotonic_ns);
         result = this->supervisor_->Step(input);
         supervisor_config = this->supervisor_->config();
