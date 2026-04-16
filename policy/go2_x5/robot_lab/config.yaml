@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 go2_x5/robot_lab:
-  model_name: "policy_dogonly_20260401_9500.pt"
+  model_name: "policy.onnx"
   # Dog-only flat policy obs: 260 = 3+3+3+3+18+18+18+187+6+1
   num_observations: 260
   observations: ["lin_vel", "ang_vel", "gravity_vec", "commands", "dof_pos", "dof_vel", "actions", "height_scan", "arm_joint_command", "gripper_command"]

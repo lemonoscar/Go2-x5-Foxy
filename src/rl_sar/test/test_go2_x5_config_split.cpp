@@ -65,7 +65,7 @@ int main()
     RequireNotContains(base_content, "key1_navigation_cmd_x:", base_file);
     RequireNotContains(base_content, "fixed_cmd_x:", base_file);
 
-    RequireContains(config_content, "model_name: \"policy_dogonly_20260401_9500.pt\"", config_file);
+    RequireContains(config_content, "model_name: \"policy.onnx\"", config_file);
     RequireContains(config_content, "num_observations: 260", config_file);
     RequireContains(config_content, "observations: [\"lin_vel\", \"ang_vel\", \"gravity_vec\", \"commands\", \"dof_pos\", \"dof_vel\", \"actions\", \"height_scan\", \"arm_joint_command\", \"gripper_command\"]", config_file);
     RequireContains(config_content, "fixed_cmd_x: 0.5", config_file);
@@ -77,8 +77,8 @@ int main()
     RequireContains(config_content, "arm_bridge_require_live_state: true", config_file);
     RequireContains(config_content, "arm_bridge_shadow_feedback_enabled: false", config_file);
     RequireContains(config_content, "arm_hold_enabled: false", config_file);
-    RequireContains(config_content, "arm_hold_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]", config_file);
-    RequireContains(config_content, "arm_key_pose: [0, 1.57, 1.57, 0.0, 0.0, 0.0]", config_file);
+    RequireContains(config_content, "arm_hold_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]", config_file);
+    RequireContains(config_content, "arm_key_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]", config_file);
     RequireNotContains(config_content, "cmd_vel_alpha:", config_file);
     RequireNotContains(config_content, "key1_prefer_navigation_mode:", config_file);
     RequireNotContains(config_content, "key1_publish_cmd_vel_on_navigation:", config_file);

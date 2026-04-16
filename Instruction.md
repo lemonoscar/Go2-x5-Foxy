@@ -67,6 +67,29 @@ ros2 launch rl_sar go2_x5_real_dual.launch.py \
   network_interface:=eth0
 ```
 
+如需完整记录真机日志，使用：
+
+```bash
+mkdir -p ~/rl_logs
+source /opt/ros/foxy/setup.bash
+source ~/rl_ras_n/install/setup.bash
+export ARX5_SDK_ROOT=~/arx5-sdk
+export ARX5_SDK_LIB_PATH=$ARX5_SDK_ROOT/lib/aarch64
+export UNITREE_SDK2_ROOT=~/Desktop/unitree_sdk2
+export LD_LIBRARY_PATH=$ARX5_SDK_LIB_PATH:$LD_LIBRARY_PATH
+
+ros2 launch rl_sar go2_x5_real_dual.launch.py \
+  deploy_manifest_path:=~/rl_ras_n/deploy/go2_x5_real.yaml \
+  network_interface:=eth0 2>&1 | tee ~/rl_logs/go2_x5_run.log
+```
+
+常用日志查看：
+
+```bash
+tail -n 200 ~/rl_logs/go2_x5_run.log
+grep -n "GetUp\\|RLLocomotion\\|InitRL\\|failed\\|Num0\\|Num1" ~/rl_logs/go2_x5_run.log
+```
+
 注意：
 - 机械臂通过 ArxAdapter InProcessSdk 控制（已移除 Bridge Backend）
 - `arm_interface_name` 参数已移除，从 manifest 中的 `arm_adapter.can_interface` 读取
