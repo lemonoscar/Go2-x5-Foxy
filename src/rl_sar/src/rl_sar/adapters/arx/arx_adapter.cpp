@@ -680,6 +680,28 @@ bool LoadRequiredSymbol(void* handle, const char* symbol_name, Fn* out, std::str
 #endif
 }
 
+template <typename Fn>
+bool LoadOptionalSymbol(void* handle, const char* symbol_name, Fn* out)
+{
+#if defined(__linux__)
+    dlerror();
+    void* symbol = dlsym(handle, symbol_name);
+    const char* dl_error = dlerror();
+    if (dl_error != nullptr || symbol == nullptr)
+    {
+        *out = nullptr;
+        return false;
+    }
+    *out = reinterpret_cast<Fn>(symbol);
+    return true;
+#else
+    (void)handle;
+    (void)symbol_name;
+    *out = nullptr;
+    return false;
+#endif
+}
+
 class SdkBackend final : public rl_sar::adapters::arx::IArxBackend
 {
 public:
@@ -1059,17 +1081,35 @@ private:
 
     bool LoadSymbols(std::string* error)
     {
-        return LoadRequiredSymbol(this->sdk_handle_, "_ZN6ArxCanC1ENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE", &this->symbols_.ctor, error) &&
+        const bool required_loaded =
+            LoadRequiredSymbol(this->sdk_handle_, "_ZN6ArxCanC1ENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE", &this->symbols_.ctor, error) &&
             LoadRequiredSymbol(this->sdk_handle_, "_ZN6ArxCanD1Ev", &this->symbols_.dtor, error) &&
             LoadRequiredSymbol(this->sdk_handle_, "_ZN6ArxCan17send_EC_motor_cmdEtfffff", &this->symbols_.send_ec, error) &&
-            LoadRequiredSymbol(this->sdk_handle_, "_ZN6ArxCan18query_EC_motor_posEt", &this->symbols_.query_ec_pos, error) &&
-            LoadRequiredSymbol(this->sdk_handle_, "_ZN6ArxCan18query_EC_motor_velEt", &this->symbols_.query_ec_vel, error) &&
-            LoadRequiredSymbol(this->sdk_handle_, "_ZN6ArxCan22query_EC_motor_currentEt", &this->symbols_.query_ec_current, error) &&
             LoadRequiredSymbol(this->sdk_handle_, "_ZN6ArxCan17send_DM_motor_cmdEtfffff", &this->symbols_.send_dm, error) &&
             LoadRequiredSymbol(this->sdk_handle_, "_ZN6ArxCan15enable_DM_motorEt", &this->symbols_.enable_dm, error) &&
             LoadRequiredSymbol(this->sdk_handle_, "_ZN6ArxCan18reset_zero_readoutEt", &this->symbols_.reset_zero_readout, error) &&
             LoadRequiredSymbol(this->sdk_handle_, "_ZN6ArxCan5clearEt", &this->symbols_.clear, error) &&
             LoadRequiredSymbol(this->sdk_handle_, "_ZN6ArxCan13get_motor_msgEv", &this->symbols_.get_motor_msg, error);
+        if (!required_loaded)
+        {
+            return false;
+        }
+
+        const bool has_query_pos =
+            LoadOptionalSymbol(this->sdk_handle_, "_ZN6ArxCan18query_EC_motor_posEt", &this->symbols_.query_ec_pos);
+        const bool has_query_vel =
+            LoadOptionalSymbol(this->sdk_handle_, "_ZN6ArxCan18query_EC_motor_velEt", &this->symbols_.query_ec_vel);
+        const bool has_query_current =
+            LoadOptionalSymbol(this->sdk_handle_, "_ZN6ArxCan22query_EC_motor_currentEt", &this->symbols_.query_ec_current);
+
+        this->ec_query_support_available_ = has_query_pos && has_query_vel && has_query_current;
+        if (!this->ec_query_support_available_)
+        {
+            LogWarning(
+                "ARX SDK libhardware.so does not export full query_EC_* symbols. "
+                "Continuing with compatibility mode and skipping EC probe queries.");
+        }
+        return true;
     }
 
     SdkArxCan* can_instance()
@@ -1095,9 +1135,18 @@ private:
             switch (this->robot_config_->motor_type[i])
             {
                 case SdkMotorType::EcA4310:
-                    this->symbols_.query_ec_pos(this->can_instance(), motor_id);
-                    this->symbols_.query_ec_vel(this->can_instance(), motor_id);
-                    this->symbols_.query_ec_current(this->can_instance(), motor_id);
+                    if (this->symbols_.query_ec_pos != nullptr)
+                    {
+                        this->symbols_.query_ec_pos(this->can_instance(), motor_id);
+                    }
+                    if (this->symbols_.query_ec_vel != nullptr)
+                    {
+                        this->symbols_.query_ec_vel(this->can_instance(), motor_id);
+                    }
+                    if (this->symbols_.query_ec_current != nullptr)
+                    {
+                        this->symbols_.query_ec_current(this->can_instance(), motor_id);
+                    }
                     break;
                 case SdkMotorType::DmJ4310:
                 case SdkMotorType::DmJ4340:
@@ -1126,6 +1175,7 @@ private:
     uint64_t last_command_send_ns_ = 0;
     uint64_t last_target_seq_ = 0;
     uint64_t state_seq_ = 0;
+    bool ec_query_support_available_ = true;
     std::array<float, kArxJointCount> last_q_target_{};
     std::aligned_storage_t<sizeof(SdkArxCan), alignof(SdkArxCan)> can_storage_{};
     void* sdk_handle_ = nullptr;

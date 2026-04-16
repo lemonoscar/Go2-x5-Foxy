@@ -40,6 +40,10 @@ namespace
 #define RL_SAR_TEST_FAKE_ARX_HARDWARE_LIB ""
 #endif
 
+#ifndef RL_SAR_TEST_FAKE_ARX_HARDWARE_LIB_NO_EC_QUERY
+#define RL_SAR_TEST_FAKE_ARX_HARDWARE_LIB_NO_EC_QUERY ""
+#endif
+
 #if defined(__linux__)
 int BindUdpSocket(uint16_t* port_out)
 {
@@ -244,6 +248,11 @@ protected:
         return RL_SAR_TEST_FAKE_ARX_HARDWARE_LIB;
     }
 
+    static std::string FakeSdkHardwareLibraryWithoutEcQueries()
+    {
+        return RL_SAR_TEST_FAKE_ARX_HARDWARE_LIB_NO_EC_QUERY;
+    }
+
     static uint64_t GetMonotonicNs()
     {
         return static_cast<uint64_t>(
@@ -339,6 +348,43 @@ TEST_F(ArxAdapterContract, InitializeReturnsFalseWithRequireLiveState)
 
     // Should fail without actual ARX hardware
     EXPECT_FALSE(success);
+}
+
+TEST_F(ArxAdapterContract, InitializesWithSdkLibraryMissingEcQuerySymbols)
+{
+#if defined(__linux__)
+    const std::string fake_sdk_lib = FakeSdkHardwareLibraryWithoutEcQueries();
+    if (fake_sdk_lib.empty())
+    {
+        GTEST_SKIP() << "fake ARX hardware library without EC query symbols not configured";
+    }
+
+    std::string socket_error;
+    if (!CanCreateDatagramSocket(&socket_error))
+    {
+        GTEST_SKIP() << "socket probes blocked on this host: " << socket_error;
+    }
+
+    auto config = MakeDefaultConfig();
+    config.require_live_state = true;
+    config.can_interface = "lo";
+    config.sdk_lib_path = fake_sdk_lib;
+
+    ASSERT_TRUE(adapter_->Initialize(config));
+    EXPECT_EQ(adapter_->GetActiveBackend(), ArxAdapter::BackendType::InProcessSdk);
+
+    adapter_->Start();
+    adapter_->SetCommand(MakeTestCommand(77));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+    protocol::ArmStateFrame state;
+    ASSERT_TRUE(adapter_->GetState(state));
+    EXPECT_EQ(state.target_seq_applied, 77u);
+    EXPECT_NEAR(state.q[0], 0.1f, 1e-5f);
+    EXPECT_NEAR(state.q[5], 0.6f, 1e-5f);
+#else
+    GTEST_SKIP() << "SDK backend test requires Linux";
+#endif
 }
 
 TEST_F(ArxAdapterContract, InitializeIsIdempotent)

@@ -125,6 +125,7 @@ void ArxCan::send_EC_motor_cmd(uint16_t motor_id, float, float, float pos, float
     msg.current_actual_float = tor;
 }
 
+#if !defined(RL_SAR_TEST_OMIT_EC_QUERY_SYMBOLS)
 void ArxCan::query_EC_motor_pos(uint16_t motor_id)
 {
     std::lock_guard<std::mutex> lock(FakeMutex());
@@ -154,6 +155,7 @@ void ArxCan::query_EC_motor_current(uint16_t motor_id)
         state.motor_msg[motor_id].motor_id = motor_id;
     }
 }
+#endif
 
 void ArxCan::set_motor(uint16_t motor_id, uint8_t)
 {

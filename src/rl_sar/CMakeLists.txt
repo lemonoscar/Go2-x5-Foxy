@@ -721,14 +721,17 @@ if(USE_CMAKE AND BUILD_TESTING)
 
     # ARX adapter tests
     add_library(fake_arx_hardware SHARED test/fake_arx_hardware.cpp)
+    add_library(fake_arx_hardware_no_ec_queries SHARED test/fake_arx_hardware.cpp)
+    target_compile_definitions(fake_arx_hardware_no_ec_queries PRIVATE RL_SAR_TEST_OMIT_EC_QUERY_SYMBOLS=1)
     add_executable(test_arm_adapter_contract
         test/test_arm_adapter_contract.cpp
         src/rl_sar/adapters/arx/arx_adapter.cpp
         src/rl_sar/protocol/go2_x5_protocol.cpp)
     target_include_directories(test_arm_adapter_contract PRIVATE include)
-    add_dependencies(test_arm_adapter_contract fake_arx_hardware)
+    add_dependencies(test_arm_adapter_contract fake_arx_hardware fake_arx_hardware_no_ec_queries)
     target_compile_definitions(test_arm_adapter_contract PRIVATE
-        RL_SAR_TEST_FAKE_ARX_HARDWARE_LIB=\"$<TARGET_FILE:fake_arx_hardware>\")
+        RL_SAR_TEST_FAKE_ARX_HARDWARE_LIB=\"$<TARGET_FILE:fake_arx_hardware>\"
+        RL_SAR_TEST_FAKE_ARX_HARDWARE_LIB_NO_EC_QUERY=\"$<TARGET_FILE:fake_arx_hardware_no_ec_queries>\")
     target_link_libraries(test_arm_adapter_contract
         gtest
         gtest_main
